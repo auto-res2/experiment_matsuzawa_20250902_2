@@ -19,7 +19,7 @@ from __future__ import annotations
 import random
 import warnings
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Sequence
 
 import numpy as np
 import pandas as pd
@@ -33,15 +33,42 @@ from torchvision import transforms
 DATA_DIR = Path("data")
 
 # --------------------------------------------------------------------
+#  Helper utilities
+# --------------------------------------------------------------------
+
+def _resolve_key(d: Dict, keys: Sequence[str]):
+    """Return the first existing key from *keys* inside dict *d*.
+
+    Notes
+    -----
+    This is primarily used to guard against upstream changes in the
+    HuggingFace dataset where the label/environment fields may be renamed
+    (e.g. "y" ➔ "label").  Raising an explicit KeyError early makes it easy to
+    identify completely missing fields while still being robust to mere
+    *renames*.
+    """
+    for k in keys:
+        if k in d:
+            return d[k]
+    raise KeyError(f"None of the keys {keys} found in sample {d.keys()}")
+
+
+# --------------------------------------------------------------------
 #  Waterbirds
 # --------------------------------------------------------------------
 
 def prepare_waterbirds() -> Dict[str, Dataset]:
-    """Download Waterbirds-95 splits via 🤗 Datasets and wrap into torch Dataset."""
+    """Download Waterbirds-95 splits via 🤗 Datasets and wrap into torch Dataset.
+
+    The HuggingFace dataset has changed field-names in the past ("y" ➔ "label").
+    We therefore look for several fall-back keys to keep the code working
+    across versions.
+    """
     name = "grodino/waterbirds"
     ds = load_dataset(name)
     assert {"train", "validation", "test"}.issubset(ds.keys()), "Waterbirds splits missing!"
 
+    # Common image preprocessing
     transform = transforms.Compose(
         [
             transforms.Resize(256),
@@ -63,8 +90,9 @@ def prepare_waterbirds() -> Dict[str, Dataset]:
         def __getitem__(self, idx):
             sample = self.d[idx]
             img = sample["image"]
-            y = int(sample["y"])
-            env = int(sample["place"])
+            # Robust field resolution --------------------------------------------------
+            y = int(_resolve_key(sample, ["y", "label", "labels", "species"]))
+            env = int(_resolve_key(sample, ["place", "environment", "domain", "env"]))
             return self.tf(img), y, env
 
     return {k: _Wrapped(v) for k, v in ds.items()}
