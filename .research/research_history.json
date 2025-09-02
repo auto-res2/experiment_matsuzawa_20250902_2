@@ -6,5 +6,82 @@
     "ood spurious correlations",
     "invariant risk minimization images",
     "causal representation learning vision"
+  ],
+  "research_study_list": [
+    {
+      "title": "Seeing is not Believing: Robust Reinforcement Learning against Spurious Correlation"
+    },
+    {
+      "title": "A Causal Framework for Decomposing Spurious Variations"
+    },
+    {
+      "title": "Examining and Combating Spurious Features under Distribution Shift"
+    },
+    {
+      "title": "Contextual Reliability: When Different Features Matter in Different Contexts"
+    },
+    {
+      "title": "Causal Effect Regularization: Automated Detection and Removal of Spurious Correlations"
+    },
+    {
+      "title": "Explicit Tradeoffs between Adversarial and Natural Distributional Robustness"
+    },
+    {
+      "title": "Adversarial Distributional Training for Robust Deep Learning"
+    },
+    {
+      "title": "Optimal Transport Model Distributional Robustness"
+    },
+    {
+      "title": "Provable Robustness against Wasserstein Distribution Shifts via Input Randomization"
+    },
+    {
+      "title": "Wasserstein distributional robustness of neural networks"
+    },
+    {
+      "title": "Accuracy on the Curve: On the Nonlinear Correlation of ML Performance Between Data Subpopulations"
+    },
+    {
+      "title": "Breaking Correlation Shift via Conditional Invariant Regularizer"
+    },
+    {
+      "title": "MetaCoCo: A New Few-Shot Classification Benchmark with Spurious Correlation"
+    },
+    {
+      "title": "ID and OOD Performance Are Sometimes Inversely Correlated on Real-world Datasets"
+    },
+    {
+      "title": "Spurious Feature Diversification Improves Out-of-distribution Generalization"
+    },
+    {
+      "title": "The Missing Invariance Principle found --  the Reciprocal Twin of Invariant Risk Minimization "
+    },
+    {
+      "title": "Invariant Risk Minimization Is A Total Variation Model"
+    },
+    {
+      "title": "What Is Missing in IRM Training and Evaluation? Challenges and Solutions"
+    },
+    {
+      "title": "Sparse Invariant Risk Minimization"
+    },
+    {
+      "title": "Sparse Invariant Risk Minimization"
+    },
+    {
+      "title": "A Sparsity Principle for Partially Observable Causal Representation Learning"
+    },
+    {
+      "title": "CITRIS: Causal Identifiability from Temporal Intervened Sequences"
+    },
+    {
+      "title": "CITRIS: Causal Identifiability from Temporal Intervened Sequences"
+    },
+    {
+      "title": "Causal Representation Learning for Instantaneous and Temporal Effects in Interactive Systems"
+    },
+    {
+      "title": "Causal Representation Learning from Multiple Distributions: A General Setting"
+    }
   ]
 }
