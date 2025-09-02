@@ -1,0 +1,13 @@
+/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/train.py:63: RuntimeWarning: Model 'vmamba_tiny_patch16_224' is unavailable in the installed timm (1.0.19). Falling back to 'resnet18'.
+NOTE: The numerical results from the experiments will *not* match those reported in the paper when a fallback model is used. The substitution only exists so that the codebase remains executable in minimal CI environments.
+  warnings.warn(
+/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/preprocess.py:80: UserWarning: Falling back to TinySynthetic dataset – /mnt/imagenet missing; results will not be valid
+  warnings.warn(
+/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/train.py:63: RuntimeWarning: Model 'vmamba_tiny_patch16_224' is unavailable in the installed timm (1.0.19). Falling back to 'resnet18'.
+NOTE: The numerical results from the experiments will *not* match those reported in the paper when a fallback model is used. The substitution only exists so that the codebase remains executable in minimal CI environments.
+  warnings.warn(
+/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/train.py:63: RuntimeWarning: Model 'vmamba_tiny_patch16_224' is unavailable in the installed timm (1.0.19). Falling back to 'resnet18'.
+NOTE: The numerical results from the experiments will *not* match those reported in the paper when a fallback model is used. The substitution only exists so that the codebase remains executable in minimal CI environments.
+  warnings.warn(
+/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/preprocess.py:80: UserWarning: Falling back to TinySynthetic dataset – /mnt/imagenet100 missing; results will not be valid
+  warnings.warn(
