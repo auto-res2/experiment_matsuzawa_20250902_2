@@ -15,10 +15,21 @@ import torch
 from matplotlib import pyplot as plt
 from avalanche.evaluation.metrics import accuracy_metrics, forgetting_metrics
 from avalanche.logging import TextLogger
-from avalanche.training.strategies import DER, Replay
 
-from .preprocess import (build_cifar100_benchmark, build_omniglot_rotation_scenario,
-                         build_tinyimagenet_benchmark, set_all_seeds)
+# -----------------------------------------------------------------------------
+#  Avalanche strategies (see train.py for explanation of the dual-path import)
+# -----------------------------------------------------------------------------
+try:
+    from avalanche.training.supervised import DER, Replay  # >=0.5
+except ModuleNotFoundError:  # pragma: no cover
+    from avalanche.training.strategies import DER, Replay  # type: ignore
+
+from .preprocess import (
+    build_cifar100_benchmark,
+    build_omniglot_rotation_scenario,
+    build_tinyimagenet_benchmark,
+    set_all_seeds,
+)
 from .train import SQMStrategy, build_backbone
 from .evaluate import annotate_bar, compute_flops, set_plot_style
 
@@ -47,19 +58,30 @@ def run_experiment_1() -> None:
     # our method (SQM)
     backbone, feat_dim = build_backbone("resnet18")
     optim = torch.optim.SGD(backbone.parameters(), lr=0.1, momentum=0.9)
-    strategies["SQM"] = SQMStrategy(backbone, optim, torch.nn.CrossEntropyLoss(), feat_dim,
-                                     lam=0.03, pq_clusters=4, drop_ratio=0.8)
+    strategies["SQM"] = SQMStrategy(
+        backbone,
+        optim,
+        torch.nn.CrossEntropyLoss(),
+        feat_dim,
+        lam=0.03,
+        pq_clusters=4,
+        drop_ratio=0.8,
+    )
 
     # ER-Ring buffer baseline
     backbone_er, _ = build_backbone("resnet18")
     opt_er = torch.optim.SGD(backbone_er.parameters(), lr=0.1)
     mem_size = int(200 * 1024 / (32 * 32 * 3))
-    strategies["ER"] = Replay(backbone_er, opt_er, torch.nn.CrossEntropyLoss(), mem_size=mem_size)
+    strategies["ER"] = Replay(
+        backbone_er, opt_er, torch.nn.CrossEntropyLoss(), mem_size=mem_size
+    )
 
     # DER++ baseline
     backbone_der, _ = build_backbone("resnet18")
     opt_der = torch.optim.SGD(backbone_der.parameters(), lr=0.1)
-    strategies["DER++"] = DER(backbone_der, opt_der, torch.nn.CrossEntropyLoss(), mem_size=mem_size)
+    strategies["DER++"] = DER(
+        backbone_der, opt_der, torch.nn.CrossEntropyLoss(), mem_size=mem_size
+    )
 
     # ---------------- Run loop ----------------
     results = []
@@ -72,9 +94,12 @@ def run_experiment_1() -> None:
             t_start = time.time()
 
             # silent evaluation plugin – we only need final numbers
-            eval_plugin = avalanche.training.plugins.EvaluationPlugin(
-                accuracy_metrics(stream=True), forgetting_metrics(stream=True),
-                logger=TextLogger(open(os.devnull, "w"))
+            from avalanche.training.plugins import EvaluationPlugin
+
+            eval_plugin = EvaluationPlugin(
+                accuracy_metrics(stream=True),
+                forgetting_metrics(stream=True),
+                logger=TextLogger(open(os.devnull, "w")),
             )
             strat.evaluator = eval_plugin
 
@@ -94,17 +119,21 @@ def run_experiment_1() -> None:
             extra_mem = strat.extra_memory_bytes() if strat_name == "SQM" else 0
             flops = compute_flops(strat.model) or 0.0
 
-            print(f"Final Avg Acc: {top1_acc:.2f}% | Extra Mem: {extra_mem/1024:.1f} KB | "
-                  f"FLOPs: {flops/1e9:.2f} G | Time: {t_end - t_start:.1f}s")
+            print(
+                f"Final Avg Acc: {top1_acc:.2f}% | Extra Mem: {extra_mem/1024:.1f} KB | "
+                f"FLOPs: {flops/1e9:.2f} G | Time: {t_end - t_start:.1f}s"
+            )
 
-            results.append({
-                "dataset": bench_name,
-                "strategy": strat_name,
-                "accuracy": top1_acc,
-                "extra_memory_KB": extra_mem / 1024,
-                "flops_G": flops / 1e9,
-                "time_s": t_end - t_start,
-            })
+            results.append(
+                {
+                    "dataset": bench_name,
+                    "strategy": strat_name,
+                    "accuracy": top1_acc,
+                    "extra_memory_KB": extra_mem / 1024,
+                    "flops_G": flops / 1e9,
+                    "time_s": t_end - t_start,
+                }
+            )
 
     # ---------------- Tabulate & plot ----------------
     df = pd.DataFrame(results)
@@ -136,9 +165,15 @@ def run_experiment_2():
     # helper to build SQM variants ------------------------------------------------
     def make_variant(*, disable_cs=False, disable_pq=False, disable_sparse=False):
         cnn = torch.nn.Sequential(
-            torch.nn.Conv2d(1, 64, 3, padding=1), torch.nn.ReLU(), torch.nn.MaxPool2d(2),
-            torch.nn.Conv2d(64, 64, 3, padding=1), torch.nn.ReLU(), torch.nn.MaxPool2d(2),
-            torch.nn.Flatten(), torch.nn.Linear(64 * 7 * 7, 128))
+            torch.nn.Conv2d(1, 64, 3, padding=1),
+            torch.nn.ReLU(),
+            torch.nn.MaxPool2d(2),
+            torch.nn.Conv2d(64, 64, 3, padding=1),
+            torch.nn.ReLU(),
+            torch.nn.MaxPool2d(2),
+            torch.nn.Flatten(),
+            torch.nn.Linear(64 * 7 * 7, 128),
+        )
         opt = torch.optim.SGD(cnn.parameters(), lr=0.05)
         strat = SQMStrategy(cnn, opt, torch.nn.CrossEntropyLoss(), feat_dim=128, lam=0.03)
         if disable_cs:
@@ -163,11 +198,13 @@ def run_experiment_2():
         for exp_id, exp in enumerate(scenario.train_stream):
             strat.train(exp)
             if (exp_id + 1) % 10 == 0:
-                results.append({
-                    "tasks": exp_id + 1,
-                    "variant": name,
-                    "memory_KB": strat.extra_memory_bytes() / 1024,
-                })
+                results.append(
+                    {
+                        "tasks": exp_id + 1,
+                        "variant": name,
+                        "memory_KB": strat.extra_memory_bytes() / 1024,
+                    }
+                )
         acc = strat.eval(scenario.test_stream)
         print(f"Final accuracy: {acc['Top1_Acc_Stream/eval_phase/test_stream']:.2f}%")
 
@@ -186,8 +223,10 @@ def run_experiment_2():
 # --------------------------------------------------------------------------------
 
 def run_experiment_3():
-    print("Experiment 3 requires ADB and cannot be executed inside this environment.\n"
-          "Please refer to scripts/mobile/run_on_device.sh for details.")
+    print(
+        "Experiment 3 requires ADB and cannot be executed inside this environment.\n"
+        "Please refer to scripts/mobile/run_on_device.sh for details."
+    )
 
 # --------------------------------------------------------------------------------
 #  CLI entry-point
@@ -195,8 +234,13 @@ def run_experiment_3():
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--exp", type=int, choices=[1, 2, 3], default=1,
-                        help="Which experiment to run (1/2/3)")
+    parser.add_argument(
+        "--exp",
+        type=int,
+        choices=[1, 2, 3],
+        default=1,
+        help="Which experiment to run (1/2/3)",
+    )
     args = parser.parse_args()
 
     if args.exp == 1:

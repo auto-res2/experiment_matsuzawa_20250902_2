@@ -13,15 +13,35 @@ from typing import Dict, List, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision.models import (mobilenet_v3_small, resnet18, vit_b_16,
-                                ViT_B_16_Weights)
+from torchvision.models import (
+    mobilenet_v3_small,
+    resnet18,
+    vit_b_16,
+    ViT_B_16_Weights,
+)
 
-# Avalanche strategy base class ------------------------------------------------
-from avalanche.training.strategies import Naive
+# -----------------------------------------------------------------------------
+#  Avalanche strategy base class
+# -----------------------------------------------------------------------------
+# NOTE:  Avalanche reorganised its internal package structure in recent
+#        versions (>=0.5).  The supervised continual-learning strategies such
+#        as ``Naive`` have been moved from
+#        ``avalanche.training.strategies`` to ``avalanche.training.supervised``.
+#        To keep backward-compatibility with older versions while also
+#        supporting the latest release, we attempt the new import first and
+#        silently fall back to the old path if necessary.
+# -----------------------------------------------------------------------------
+try:
+    # >= 0.5
+    from avalanche.training.supervised import Naive
+except ModuleNotFoundError:  # pragma: no cover
+    # <= 0.4
+    from avalanche.training.strategies import Naive  # type: ignore
 
 # =============================================================================
 #   Count-Sketch Fisher (parameter-space regulariser)
 # =============================================================================
+
 
 class CountSketchFisher(nn.Module):
     """Compressed Fisher information tracker using Count-Sketch.
@@ -33,11 +53,16 @@ class CountSketchFisher(nn.Module):
         super().__init__()
         self.n_buckets = n_buckets
         # --- hash & sign vectors (sampled once, kept fixed) ------------------
-        self.register_buffer("h", torch.randint(0, n_buckets, (1,), dtype=torch.int64))
-        self.register_buffer("s", torch.randint(0, 2, (1,), dtype=torch.int8) * 2 - 1)
+        self.register_buffer(
+            "h", torch.randint(0, n_buckets, (1,), dtype=torch.int64)
+        )
+        self.register_buffer(
+            "s", torch.randint(0, 2, (1,), dtype=torch.int8) * 2 - 1
+        )
         # sketch table holds the running sum of squared gradients
-        self.table = nn.Parameter(torch.zeros(n_buckets, dtype=torch.float32),
-                                  requires_grad=False)
+        self.table = nn.Parameter(
+            torch.zeros(n_buckets, dtype=torch.float32), requires_grad=False
+        )
 
     # -------------------------------------------------------------------------
     @torch.no_grad()
@@ -53,14 +78,17 @@ class CountSketchFisher(nn.Module):
 
     # -------------------- bookkeeping for memory footprint -------------------
     def extra_memory(self) -> int:  # bytes
-        return (self.table.nelement() * self.table.element_size() +
-                self.h.nelement() * self.h.element_size() +
-                self.s.nelement() * self.s.element_size())
+        return (
+            self.table.nelement() * self.table.element_size()
+            + self.h.nelement() * self.h.element_size()
+            + self.s.nelement() * self.s.element_size()
+        )
 
 
 # =============================================================================
 #   Product-Quantised Prototype Buffer (data-side memory)
 # =============================================================================
+
 
 class ProductQuantisedBuffer:
     """A simple Product-Quantisation (PQ) buffer that stores class prototypes
@@ -88,7 +116,7 @@ class ProductQuantisedBuffer:
             proto = feats_np[idx].mean(axis=0, keepdims=True)  # 1×D
             codes_per_sub = []
             for s in range(self.n_subvec):
-                chunk = proto[:, s * self.sub_dim:(s + 1) * self.sub_dim]
+                chunk = proto[:, s * self.sub_dim : (s + 1) * self.sub_dim]
                 cb = self.codebooks[s]
                 # ------- populate or update the sub-codebook ---------------
                 if (cb.abs().sum(dim=1) == 0).any():
@@ -96,9 +124,11 @@ class ProductQuantisedBuffer:
                     cb[empty_slot] = torch.from_numpy(chunk.squeeze()).float()
                     code_idx = empty_slot.item()
                 else:
-                    dists = ((cb - torch.from_numpy(chunk)).pow(2).sum(dim=1))
+                    dists = (cb - torch.from_numpy(chunk)).pow(2).sum(dim=1)
                     code_idx = int(dists.argmin())
-                    cb[code_idx] = 0.9 * cb[code_idx] + 0.1 * torch.from_numpy(chunk.squeeze())
+                    cb[code_idx] = 0.9 * cb[code_idx] + 0.1 * torch.from_numpy(
+                        chunk.squeeze()
+                    )
                 codes_per_sub.append(torch.tensor(code_idx, dtype=torch.uint8))
             self.codes.setdefault(int(cls), []).append(torch.stack(codes_per_sub))
 
@@ -129,13 +159,19 @@ class ProductQuantisedBuffer:
 #   Lightweight Decoders (used to reconstruct images from PQ codes)
 # =============================================================================
 
+
 class DecoderCIFAR(nn.Module):
     def __init__(self):
         super().__init__()
         self.net = nn.Sequential(
-            nn.ConvTranspose2d(192, 64, 3), nn.BatchNorm2d(64), nn.ReLU(),
-            nn.ConvTranspose2d(64, 32, 3), nn.BatchNorm2d(32), nn.ReLU(),
-            nn.ConvTranspose2d(32, 3, 3))
+            nn.ConvTranspose2d(192, 64, 3),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.ConvTranspose2d(64, 32, 3),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.ConvTranspose2d(32, 3, 3),
+        )
 
     def forward(self, z):
         z = z.view(z.size(0), 192, 1, 1)
@@ -146,7 +182,8 @@ class DecoderOmniglot(nn.Module):
     def __init__(self, feat_dim: int = 128):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(feat_dim, 256), nn.ReLU(), nn.Linear(256, 784))
+            nn.Linear(feat_dim, 256), nn.ReLU(), nn.Linear(256, 784)
+        )
 
     def forward(self, z):
         return torch.sigmoid(self.net(z)).view(-1, 1, 28, 28)
@@ -155,6 +192,7 @@ class DecoderOmniglot(nn.Module):
 # =============================================================================
 #   Backbone Factory
 # =============================================================================
+
 
 def build_backbone(name: str):
     """Return (backbone_without_classifier, feature_dimension)."""
@@ -180,6 +218,7 @@ def build_backbone(name: str):
 #   SQM Continual-Learning Strategy (built on Avalanche's Naive)
 # =============================================================================
 
+
 class SQMStrategy(Naive):
     """Wrapper that augments Avalanche's `Naive` strategy with:
     1) Prototype replay via a PQ buffer,
@@ -187,15 +226,17 @@ class SQMStrategy(Naive):
     3) Gradient sparsification.
     """
 
-    def __init__(self,
-                 model: nn.Module,
-                 optimizer: torch.optim.Optimizer,
-                 criterion: nn.Module,
-                 feat_dim: int,
-                 lam: float = 3e-2,
-                 pq_clusters: int = 4,
-                 drop_ratio: float = 0.8,
-                 device: str | torch.device = "cuda"):
+    def __init__(
+        self,
+        model: nn.Module,
+        optimizer: torch.optim.Optimizer,
+        criterion: nn.Module,
+        feat_dim: int,
+        lam: float = 3e-2,
+        pq_clusters: int = 4,
+        drop_ratio: float = 0.8,
+        device: str | torch.device = "cuda",
+    ):
         super().__init__(model, optimizer, criterion, device=device)
         self.lam = lam
         self.drop_ratio = drop_ratio
@@ -238,7 +279,9 @@ class SQMStrategy(Naive):
     def _after_update(self, **kwargs):  # Avalanche hook
         if self._current_features is None:
             return
-        self.pq_memory.add_prototypes(self._current_features.detach(), self.mb_y.detach())
+        self.pq_memory.add_prototypes(
+            self._current_features.detach(), self.mb_y.detach()
+        )
 
     # ---------------------------------------------------------------------
     def collect_replay(self, n_per_class: int = 1):
