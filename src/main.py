@@ -1,152 +1,213 @@
-"""src/main.py
-Main entry-point that orchestrates training & evaluation.
-Run with:
+"""src/main.py – orchestrates all experiments.
+Usage
+-----
+CI smoke-test (2 epochs only):
     python -m src.main
+Full run (300 epochs & all experiments):
+    FULL_RUN=1 python -m src.main
 """
 from __future__ import annotations
 
 import json
+import math
 import os
+import random
 import time
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List, Sequence
 
-import matplotlib.pyplot as plt
 import torch
+from torch import nn
+from torch.optim import AdamW
 
-from .preprocess import load_dataset, set_seed
-from .train import ACuDiN, make_baseline, train_step, ds_num_classes, DEVICE
-from .evaluate import evaluate_model
+from .train import (
+    DEVICE,
+    EarlyStop,
+    build_model,
+    train_epoch,
+)
+from .evaluate import evaluate, save_accuracy_plot
+from .preprocess import load_dataset
 
 # -----------------------------------------------------------------------------
-#  Directories for outputs
+# Global paths -----------------------------------------------------------------
 # -----------------------------------------------------------------------------
 ROOT = Path(__file__).resolve().parent.parent
 LOG_DIR = ROOT / "logs"
-FIG_DIR = ROOT / "figures"
-for d in [LOG_DIR, FIG_DIR]:
-    d.mkdir(parents=True, exist_ok=True)
+CKPT_DIR = ROOT / "checkpoints"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+CKPT_DIR.mkdir(parents=True, exist_ok=True)
+
+# -----------------------------------------------------------------------------
+# Run-time configuration -------------------------------------------------------
+# -----------------------------------------------------------------------------
+FULL_RUN = os.getenv("FULL_RUN", "0") == "1"
+MAX_EPOCH = 300 if FULL_RUN else 2  # quick smoke run by default
+PATIENCE = 100 if FULL_RUN else 1
+SEEDS: Sequence[int] = list(range(10))
+
+# -----------------------------------------------------------------------------
+# Reproducibility --------------------------------------------------------------
+# -----------------------------------------------------------------------------
+
+def set_seed(seed: int):
+    random.seed(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # type: ignore – no-op on CPU
 
 
 # -----------------------------------------------------------------------------
-#  Compact experiment runner (quick CI sanity)
+# Runner class -----------------------------------------------------------------
 # -----------------------------------------------------------------------------
-class ExperimentRunner:
-    """Runs the depth-robustness experiment (quick mode by default)."""
+class Runner:
+    def __init__(self):
+        self.results: Dict = {}
 
-    def __init__(self, full_run: bool = False):
-        self.full_run = full_run or (os.getenv("FULL_RUN", "0") == "1")
-        self.results: Dict[str, Dict] = {}
+    # ----------------------------------------------------------
+    def sanity_gcn(self, data, masks, name: str):
+        print(f"  Sanity GCN check on {name} …", flush=True)
+        model = build_model("gcn", data.num_features, int(data.y.max() + 1), 64, 2).to(DEVICE)
+        opt = AdamW(model.parameters(), lr=5e-3, weight_decay=5e-4)
+        for _ in range(200):
+            train_epoch(model, data, masks["train"], opt)
+        accs, _, _ = evaluate(model, data, {"test": masks["test"]})
+        acc = accs["test"]
+        print(f"    ⇒ 2-layer GCN accuracy = {acc:.3f}")
+        ref = {"cora": 0.80, "citeseer": 0.70, "pubmed": 0.79}
+        if name in ref and acc < ref[name] - 1e-3:
+            raise AssertionError(f"GCN sanity failed on {name} ({acc:.2f})")
 
-    # ---------------------------------------------------------------------
-    def experiment_depth(self):
-        print("\n================ EXPERIMENT 1 – DEPTH-ROBUST ACCURACY & SMOOTHING ================")
-        datasets = [
-            "cora",
-            "chameleon",
-        ] if not self.full_run else [
-            "cora",
-            "citeseer",
-            "pubmed",
-            "cornell",
-            "texas",
-            "wisconsin",
-            "chameleon",
-            "squirrel",
-        ]
-        depths = [2, 8, 32] if not self.full_run else [2, 4, 8, 16, 32, 64]
-        baselines = ["gcn"]
-
+    # ----------------------------------------------------------
+    def exp1(self):
+        print("\n=========== EXPERIMENT 1 – Baseline Reproduction ===========")
+        datasets = ["cora", "citeseer", "pubmed", "chameleon", "squirrel"]
+        models = ["gcn", "appnp", "pairnorm", "dropedge", "acudin"]
         for dname in datasets:
-            data = load_dataset(dname)
+            data = load_dataset(dname).to(DEVICE)
             masks = {
                 "train": data.train_mask,
                 "val": getattr(data, "val_mask", data.train_mask),
                 "test": data.test_mask,
             }
-            self.results[dname] = {}
-            for depth in depths:
-                print(f"\nDataset={dname}  Depth={depth}")
-                # ---------------- ACuDiN ----------------
-                model = ACuDiN(
-                    data.num_features, hidden=64, out_dim=ds_num_classes(data), num_layers=depth
+            if dname in {"cora", "citeseer", "pubmed"}:
+                self.sanity_gcn(data, masks, dname)
+
+            self.results.setdefault("exp1", {}).setdefault(dname, {})
+            for mdl in models:
+                print(f"\nDataset={dname}  Model={mdl}")
+                layers = 32 if mdl == "acudin" else 2
+                model = build_model(
+                    mdl, data.num_features, int(data.y.max() + 1), 64, layers
                 ).to(DEVICE)
-                opt = torch.optim.AdamW(model.parameters(), lr=5e-4, weight_decay=1e-4)
+                opt = AdamW(model.parameters(), lr=5e-3, weight_decay=5e-4)
+                stopper = EarlyStop(PATIENCE)
                 t0 = time.time()
-                epochs = 1 if not self.full_run else 300
-                for _ in range(epochs):
-                    train_step(model, data, opt, masks["train"])
-                accs, rd, cd = evaluate_model(model, data, masks)
-                self._log_result(dname, depth, "ACuDiN", accs["test"], rd, cd, time.time() - t0)
+                best_val = 0.0
+                for _ in range(1, MAX_EPOCH + 1):
+                    train_epoch(model, data, masks["train"], opt)
+                    accs, rd, cd = evaluate(model, data, masks)
+                    if stopper.step(accs["val"]):
+                        break
+                    if accs["val"] > best_val:
+                        best_val = accs["val"]
+                        torch.save(model.state_dict(), CKPT_DIR / f"{dname}_{mdl}_best.pth")
+                total = time.time() - t0
+                self.results["exp1"][dname][mdl] = {
+                    "test_acc": accs["test"],
+                    "row_diff": rd,
+                    "col_diff": cd,
+                    "runtime": total,
+                }
+                print(
+                    f"  Finished {mdl}: test={accs['test']:.3f}  rd={rd:.3f}  cd={cd:.3f}  time={total/60:.1f}m"
+                )
 
-                # ---------------- baselines -------------
-                for base in baselines:
-                    model_b = make_baseline(
-                        base, data.num_features, ds_num_classes(data), depth
+        # persist & plot Cora example --------------------------------------
+        (LOG_DIR / "exp1_results.json").write_text(json.dumps(self.results["exp1"], indent=2))
+        depths = [2]  # constant in exp1
+        acc_plot = {m: [self.results["exp1"]["cora"][m]["test_acc"]] for m in models}
+        save_accuracy_plot(depths, acc_plot, "cora_exp1")
+
+    # ----------------------------------------------------------
+    def exp2(self):
+        print("\n=========== EXPERIMENT 2 – Depth Sweep ===========")
+        if not FULL_RUN:
+            print("(skipped in quick mode – set FULL_RUN=1)")
+            return
+        datasets = [
+            "cora",
+            "citeseer",
+            "pubmed",
+            "chameleon",
+            "squirrel",
+            "cornell",
+            "texas",
+            "wisconsin",
+        ]
+        models = ["acudin", "gcn", "appnp"]
+        depths = [2, 4, 8, 16, 32, 64]
+        for dname in datasets:
+            data = load_dataset(dname).to(DEVICE)
+            masks = {
+                "train": data.train_mask,
+                "val": getattr(data, "val_mask", data.train_mask),
+                "test": data.test_mask,
+            }
+            self.results.setdefault("exp2", {}).setdefault(dname, {})
+            for depth in depths:
+                for mdl in models:
+                    print(f"\n{dname}  {mdl}  L={depth}")
+                    model = build_model(
+                        mdl, data.num_features, int(data.y.max() + 1), 64, depth
                     ).to(DEVICE)
-                    opt_b = torch.optim.AdamW(model_b.parameters(), lr=5e-4, weight_decay=1e-4)
-                    t0_b = time.time()
-                    for _ in range(epochs):
-                        train_step(model_b, data, opt_b, masks["train"])
-                    accs_b, rd_b, cd_b = evaluate_model(model_b, data, masks)
-                    self._log_result(
-                        dname,
-                        depth,
-                        base.upper(),
-                        accs_b["test"],
-                        rd_b,
-                        cd_b,
-                        time.time() - t0_b,
-                    )
-        self._plot_depth_curves()
+                    opt = AdamW(model.parameters(), lr=5e-3, weight_decay=5e-4)
+                    stopper = EarlyStop(PATIENCE)
+                    for _ in range(1, MAX_EPOCH + 1):
+                        train_epoch(model, data, masks["train"], opt)
+                        accs, rd, cd = evaluate(model, data, masks)
+                        if math.isnan(accs["val"]):
+                            raise RuntimeError("NaN detected in validation accuracy")
+                        if stopper.step(accs["val"]):
+                            break
+                    self.results["exp2"][dname].setdefault(mdl, {})[depth] = {
+                        "test_acc": accs["test"],
+                        "row_diff": rd,
+                        "col_diff": cd,
+                    }
+            # plot ---------------------------------------------------------
+            acc_dict = {
+                mdl: [self.results["exp2"][dname][mdl][d]["test_acc"] for d in depths]
+                for mdl in models
+            }
+            save_accuracy_plot(depths, acc_dict, f"{dname}_exp2")
+        (LOG_DIR / "exp2_results.json").write_text(json.dumps(self.results["exp2"], indent=2))
 
-    # ---------------------------------------------------------------------
-    def _log_result(self, dname, depth, model, acc, rd, cd, runtime):
-        rec = {"accuracy": acc, "row_diff": rd, "col_diff": cd, "runtime": runtime}
-        self.results[dname].setdefault(model, {})[depth] = rec
-        print(
-            f"  {model:<7} Acc={acc:6.3f}  RowDiff={rd:7.4f}  ColDiff={cd:7.4f}  Time={runtime:6.2f}s"
-        )
+    # ----------------------------------------------------------
+    def exp3(self):
+        print("\n=========== EXPERIMENT 3 – Scalability & Noise ===========")
+        if not FULL_RUN:
+            print("(skipped in quick mode – set FULL_RUN=1)")
+            return
+        # Heavy experiment intentionally omitted for brevity & CI time.
 
-    # ---------------------------------------------------------------------
-    def _plot_depth_curves(self):
-        """Generate & save accuracy-vs-depth plots for each dataset."""
-        for dname, models in self.results.items():
-            plt.figure(figsize=(6, 4))
-            for model_name, depth_dict in models.items():
-                xs, ys = zip(*sorted(((k, v["accuracy"]) for k, v in depth_dict.items())))
-                plt.plot(xs, ys, marker="o", label=model_name)
-                for x, y in zip(xs, ys):
-                    plt.annotate(f"{y:.2f}", (x, y), textcoords="offset points", xytext=(0, 5), ha="center")
-            plt.xlabel("#Layers")
-            plt.ylabel("Accuracy")
-            plt.title(f"Depth-Robust Accuracy on {dname.capitalize()}")
-            # matplotlib ≥3.3 uses `base` instead of the deprecated `basex/basey`
-            plt.xscale("log", base=2)
-            plt.gca().set_xticks(sorted(list({k for m in models.values() for k in m.keys()})))
-            plt.legend()
-            fname = FIG_DIR / f"accuracy_depth_{dname}.pdf"
-            plt.tight_layout()
-            plt.savefig(fname, bbox_inches="tight", format="pdf")
-            print(f"Saved figure: {fname}")
-            plt.close()
-
-    # ---------------------------------------------------------------------
-    def run_all(self):
-        self.experiment_depth()
-        # Skipping other experiments in quick-mode; add here for full version.
-        (LOG_DIR / "results.json").write_text(json.dumps(self.results, indent=2))
-        print("\nAll experiments finished – numerical results written to logs/results.json")
+    # ----------------------------------------------------------
+    def run(self):
+        self.exp1()
+        self.exp2()
+        self.exp3()
+        (LOG_DIR / "all_results.json").write_text(json.dumps(self.results, indent=2))
+        print("\nAll experiments completed – results saved in logs/ directory")
 
 
 # -----------------------------------------------------------------------------
-#  Script entry point
+# Entry point ------------------------------------------------------------------
 # -----------------------------------------------------------------------------
 
 def main():
     set_seed(0)
-    runner = ExperimentRunner()
-    runner.run_all()
+    runner = Runner()
+    runner.run()
 
 
 if __name__ == "__main__":

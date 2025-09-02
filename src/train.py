@@ -1,161 +1,182 @@
-"""src/train.py
-Core model architectures and one training step helper.
-Refactored from the original monolithic script.
+"""src/train.py – model architectures and training utilities for the ACuDiN project
+The code is extracted and refactored from the original monolithic experimental
+script.  It contains:
+• Device / AMP configuration that is safe for both GPU and CPU environments.
+• Model building blocks (EdgeMLP, NodeMLP, ACuDiN, baselines).
+• Training helpers (EarlyStop, train_epoch).
 """
 from __future__ import annotations
 
-import os
+import contextlib
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import GCNConv, APPNP, BatchNorm
+from torch_geometric.nn import (
+    GCNConv, APPNP, BatchNorm, PairNorm, MessagePassing
+)
 from torch_geometric.utils import degree
 
 # -----------------------------------------------------------------------------
-#  Global constants & fail-fast guards
+# Device / precision setup -----------------------------------------------------
 # -----------------------------------------------------------------------------
-assert torch.__version__.startswith("2.2"), "PyTorch 2.2.* is required"
-assert torch.cuda.is_available(), "CUDA GPU required for the experiments"
+if torch.cuda.is_available():
+    DEVICE = torch.device("cuda")
+    DTYPE = torch.float16
+else:
+    DEVICE = torch.device("cpu")
+    DTYPE = torch.float32  # safer on CPU
+    print("[WARN] CUDA not available – running on CPU. Training will be slow.")
 
-DEVICE = torch.device("cuda")
-DTYPE = torch.float16  # used for torch.autocast
-AMP_SCALER = torch.cuda.amp.GradScaler()
+AMP_SCALER = torch.cuda.amp.GradScaler(enabled=DEVICE.type == "cuda")
 
 # -----------------------------------------------------------------------------
-#  ACuDiN building blocks
+# Model components -------------------------------------------------------------
 # -----------------------------------------------------------------------------
 class EdgeMLP(nn.Module):
-    """ϕ_ij gate – 2-layer MLP mapping local curvature & degree to [0,1]."""
+    """Small MLP that predicts the edge gate ϕ_ij ∈ [0,1]."""
 
     def __init__(self, in_dim: int = 4, hidden: int = 16):
         super().__init__()
-        self.mlp = nn.Sequential(
+        self.net = nn.Sequential(
             nn.Linear(in_dim, hidden), nn.PReLU(), nn.Linear(hidden, 1), nn.Sigmoid()
         )
 
-    def forward(self, edge_feats: torch.Tensor):
-        return self.mlp(edge_feats).view(-1)
+    def forward(self, z: torch.Tensor):  # type: ignore
+        return self.net(z).view(-1)
 
 
 class NodeMLP(nn.Module):
-    """α_i gate – 2-layer MLP mapping node feature statistics to (0,1)."""
+    """Small MLP that predicts the node specific teleport probability α_i."""
 
-    def __init__(self, feat_dim: int, hidden: int = 16):
+    def __init__(self, in_dim: int, hidden: int = 16):
         super().__init__()
-        self.mlp = nn.Sequential(
-            nn.Linear(feat_dim, hidden), nn.PReLU(), nn.Linear(hidden, 1), nn.Sigmoid()
+        self.net = nn.Sequential(
+            nn.Linear(in_dim, hidden), nn.PReLU(), nn.Linear(hidden, 1), nn.Sigmoid()
         )
 
-    def forward(self, h: torch.Tensor):
-        return self.mlp(h).view(-1)
+    def forward(self, z: torch.Tensor):  # type: ignore
+        return self.net(z).view(-1)
 
 
-class ACuDiNLayer(nn.Module):
-    """One ACuDiN layer: curvature-gated message passing + node-wise diffusion."""
+class ACuDiNLayer(MessagePassing):
+    """One layer of Adaptive Curvature-guided Diffusion Network (ACuDiN)."""
 
     def __init__(self, in_dim: int, out_dim: int, final: bool = False):
-        super().__init__()
-        self.conv = GCNConv(in_dim, out_dim, add_self_loops=False, normalize=False)
-        self.edge_mlp = EdgeMLP()
-        self.bn = BatchNorm(out_dim, affine=True, track_running_stats=True)
+        super().__init__(aggr="add")
+        self.lin = nn.Linear(in_dim, out_dim, bias=False)
         self.final = final
         if not final:
+            self.bn = BatchNorm(out_dim)
             self.act = nn.PReLU()
-        # +2 stats: degree & feature variance
-        self.alpha_mlp = NodeMLP(out_dim if final else in_dim + 2)
-        # When feature dimensions differ we need a projection for the residual/teleport path
-        self.skip_proj = nn.Identity() if in_dim == out_dim else nn.Linear(in_dim, out_dim, bias=False)
+        self.edge_mlp = EdgeMLP()
+        self.alpha_mlp = NodeMLP(in_dim + 2)  # features + degree + variance
 
-    # ---------------------------------------------------------------------
+    # ----------------------------------
     @staticmethod
-    def approx_curvature(edge_index: torch.Tensor, deg: torch.Tensor) -> torch.Tensor:
-        """Cheap O(|E|) Ollivier–Ricci curvature proxy κ_ij ≈ 1/deg_i + 1/deg_j."""
+    def approx_curvature(edge_index: torch.Tensor, deg: torch.Tensor):
         di = deg[edge_index[0]]
         dj = deg[edge_index[1]]
-        kappa = 1.0 / di + 1.0 / dj  # proxy in (0,2]
-        return kappa.unsqueeze(-1)
+        return (1.0 / (di + 1e-6) + 1.0 / (dj + 1e-6)).unsqueeze(-1)
 
-    # ---------------------------------------------------------------------
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor, deg: torch.Tensor):
-        # Edge-wise gate ϕ
-        kappa = self.approx_curvature(edge_index, deg).to(x.dtype)
-        deg_i = deg[edge_index[0]].unsqueeze(-1)
-        deg_j = deg[edge_index[1]].unsqueeze(-1)
-        edge_feat = torch.cat([kappa, deg_i, deg_j, kappa * 0 + 1], dim=-1)
-        phi = self.edge_mlp(edge_feat)  # (E,)
+    # ----------------------------------
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor):  # type: ignore
+        # ϕ_ij  --------------------------------------------------------------
+        with torch.no_grad():
+            deg = degree(edge_index[0], num_nodes=x.size(0), dtype=x.dtype, device=x.device)
+            kappa = self.approx_curvature(edge_index, deg)
+            edge_feat = torch.cat(
+                [
+                    kappa,
+                    deg[edge_index[0]].unsqueeze(-1),
+                    deg[edge_index[1]].unsqueeze(-1),
+                    torch.ones_like(kappa),  # bias term
+                ],
+                dim=-1,
+            )
+        phi = self.edge_mlp(edge_feat)
 
-        out = self.conv(x, edge_index, edge_weight=phi)
+        # Message passing ---------------------------------------------------
+        x_msg = self.propagate(edge_index, x=x, phi=phi)
+        out = self.lin(x_msg)
 
-        # Node-wise teleport α
         if self.final:
             return out
-        feat_var = (x.var(dim=-1, unbiased=False, keepdim=True) + 1e-6)
+
+        # α_i  --------------------------------------------------------------
+        feat_var = x.var(dim=-1, keepdim=True, unbiased=False)
         node_feat = torch.cat([x, deg.unsqueeze(-1), feat_var], dim=-1)
-        alpha = self.alpha_mlp(node_feat).unsqueeze(-1)  # (N,1)
-        # Project x to match out_dim when necessary for the skip/teleport connection
-        x_proj = self.skip_proj(x)
-        out = (1 - alpha) * out + alpha * x_proj
+        alpha = self.alpha_mlp(node_feat).unsqueeze(-1)
+        out = (1 - alpha) * out + alpha * x  # APPNP-style blend
         out = self.bn(out)
         return self.act(out)
 
+    # ------------------------------------------------------------------
+    def message(self, x_j: torch.Tensor, phi: torch.Tensor):  # type: ignore
+        return phi.unsqueeze(-1) * x_j
+
 
 class ACuDiN(nn.Module):
-    def __init__(self, in_dim: int, hidden: int, out_dim: int, num_layers: int):
-        super().__init__()
-        layers: list[nn.Module] = [ACuDiNLayer(in_dim, hidden)]
-        for _ in range(num_layers - 2):
-            layers.append(ACuDiNLayer(hidden, hidden))
-        layers.append(ACuDiNLayer(hidden, out_dim, final=True))
-        self.layers = nn.ModuleList(layers)
-        self.dropout = nn.Dropout(p=0.5)
+    """Stack of ACuDiN layers with dropout between consecutive layers."""
 
-    # ---------------------------------------------------------------------
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor):
-        deg = degree(edge_index[0], num_nodes=x.size(0)).to(x.device)
+    def __init__(self, in_dim: int, hidden: int, out_dim: int, layers: int):
+        super().__init__()
+        assert layers >= 2, "Need at least 2 layers"
+        mods = [ACuDiNLayer(in_dim, hidden)]
+        for _ in range(layers - 2):
+            mods.append(ACuDiNLayer(hidden, hidden))
+        mods.append(ACuDiNLayer(hidden, out_dim, final=True))
+        self.layers = nn.ModuleList(mods)
+        self.dropout = nn.Dropout(0.5)
+
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor):  # type: ignore
         h = x
         for layer in self.layers[:-1]:
-            h = self.dropout(layer(h, edge_index, deg))
-        logits = self.layers[-1](h, edge_index, deg)
-        return logits
+            h = self.dropout(layer(h, edge_index))
+        return self.layers[-1](h, edge_index)
 
 
 # -----------------------------------------------------------------------------
-#  Baseline factory
+# Baseline models -------------------------------------------------------------
+# -----------------------------------------------------------------------------
+class StackedGCN(nn.Module):
+    """Vanilla GCN with optional deep stacking and batch norms."""
+
+    def __init__(self, in_dim: int, out_dim: int, hidden: int, layers: int):
+        super().__init__()
+        assert layers >= 2, "Need ≥2 layers"
+        self.convs = nn.ModuleList([GCNConv(in_dim, hidden)])
+        for _ in range(layers - 2):
+            self.convs.append(GCNConv(hidden, hidden))
+        self.convs.append(GCNConv(hidden, out_dim))
+        self.bns = nn.ModuleList([BatchNorm(hidden) for _ in range(layers - 1)])
+        self.drop = nn.Dropout(0.5)
+        # PReLU slope is learned per layer for flexibility
+        self.prelu = nn.PReLU()
+
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor):  # type: ignore
+        h = x
+        for i, conv in enumerate(self.convs[:-1]):
+            h = conv(h, edge_index)
+            h = self.bns[i](h)
+            h = self.prelu(h)
+            h = self.drop(h)
+        return self.convs[-1](h, edge_index)
+
+
+# -----------------------------------------------------------------------------
+# Model builder ----------------------------------------------------------------
 # -----------------------------------------------------------------------------
 
-def make_baseline(name: str, in_dim: int, out_dim: int, num_layers: int, hidden: int = 64):
-    """Return a simple baseline model given its name."""
+def build_model(name: str, in_dim: int, out_dim: int, hidden: int, layers: int):
+    """Factory that returns the requested model."""
+
     name = name.lower()
-
     if name == "gcn":
-
-        class StackedGCN(nn.Module):
-            def __init__(self):
-                super().__init__()
-                self.convs = nn.ModuleList()
-                self.convs.append(GCNConv(in_dim, hidden))
-                for _ in range(num_layers - 2):
-                    self.convs.append(GCNConv(hidden, hidden))
-                self.convs.append(GCNConv(hidden, out_dim))
-                self.bn = nn.ModuleList([BatchNorm(hidden) for _ in range(num_layers - 1)])
-                self.dropout = nn.Dropout(0.5)
-
-            def forward(self, x, edge_index):
-                h = x
-                for i, conv in enumerate(self.convs[:-1]):
-                    h = conv(h, edge_index)
-                    h = self.bn[i](h)
-                    h = F.prelu(h, torch.tensor(0.25, device=h.device))
-                    h = self.dropout(h)
-                return self.convs[-1](h, edge_index)
-
-        return StackedGCN()
-
-    elif name == "appnp":
-        # returning PyG's built-in APPNP
+        return StackedGCN(in_dim, out_dim, hidden, layers)
+    if name == "appnp":
         return APPNP(
             K=10,
             alpha=0.1,
@@ -166,32 +187,110 @@ def make_baseline(name: str, in_dim: int, out_dim: int, num_layers: int, hidden:
             out_channels=out_dim,
         )
 
-    raise NotImplementedError(f"Baseline {name} not supported.")
+    if name == "pairnorm":
+        class PairNormGCN(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.convs = nn.ModuleList(
+                    [GCNConv(in_dim, hidden, add_self_loops=False)]
+                )
+                for _ in range(layers - 2):
+                    self.convs.append(GCNConv(hidden, hidden, add_self_loops=False))
+                self.convs.append(GCNConv(hidden, out_dim, add_self_loops=False))
+                self.pn = PairNorm()
+
+            def forward(self, x, edge_index):  # type: ignore
+                h = x
+                for conv in self.convs[:-1]:
+                    h = F.relu(conv(h, edge_index))
+                    h = self.pn(h)
+                return self.convs[-1](h, edge_index)
+
+        return PairNormGCN()
+
+    if name == "dropedge":
+        class DropEdgeResGCN(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.convs = nn.ModuleList([GCNConv(in_dim, hidden)])
+                for _ in range(layers - 2):
+                    self.convs.append(GCNConv(hidden, hidden))
+                self.convs.append(GCNConv(hidden, out_dim))
+
+            def forward(self, x, edge_index):  # type: ignore
+                h = x
+                for i, conv in enumerate(self.convs[:-1]):
+                    ei = edge_index
+                    # DropEdge with p = 0.2 during training only
+                    if self.training and torch.rand(()) < 0.2:
+                        mask = torch.rand(ei.size(1), device=ei.device) > 0.2
+                        ei = ei[:, mask]
+                    h_new = F.relu(conv(h, ei))
+                    h = h + h_new if i % 2 == 1 else h_new  # residual every 2 layers
+                return self.convs[-1](h, edge_index)
+
+        return DropEdgeResGCN()
+
+    if name == "acudin":
+        return ACuDiN(in_dim, hidden, out_dim, layers)
+
+    raise ValueError(f"Unknown model '{name}'")
 
 
 # -----------------------------------------------------------------------------
-#  Single training step helper
+# Training helpers -------------------------------------------------------------
 # -----------------------------------------------------------------------------
+class EarlyStop:
+    """Simple validation-based early stopper."""
 
-def train_step(model: nn.Module, data, optimizer: torch.optim.Optimizer, mask: torch.Tensor) -> float:
-    """Perform one optimisation step and return the loss as Python float."""
+    def __init__(self, patience: int):
+        self.best = -float("inf")
+        self.bad = 0
+        self.patience = patience
+
+    def step(self, val: float) -> bool:
+        if val > self.best:
+            self.best = val
+            self.bad = 0
+            return False
+        self.bad += 1
+        return self.bad > self.patience
+
+
+# ----------------------------------
+
+def train_epoch(model: nn.Module, data, mask: torch.Tensor, optimiser):
+    """One optimisation step with AMP support on GPU and a safe CPU fallback."""
+
+    import torch.utils.data  # local import to keep public surface tiny
+
     model.train()
-    optimizer.zero_grad(set_to_none=True)
+    optimiser.zero_grad(set_to_none=True)
 
-    with torch.autocast(device_type="cuda", dtype=DTYPE):
-        out = model(data.x, data.edge_index)
-        loss = F.cross_entropy(out[mask], data.y[mask])
+    autocast_ctx = (
+        torch.cuda.amp.autocast(device_type="cuda", dtype=DTYPE)
+        if DEVICE.type == "cuda"
+        else contextlib.nullcontext()
+    )
+
+    with autocast_ctx:
+        logits = model(data.x, data.edge_index)
+        loss = F.cross_entropy(logits[mask], data.y[mask])
 
     AMP_SCALER.scale(loss).backward()
-    AMP_SCALER.step(optimizer)
+    AMP_SCALER.step(optimiser)
     AMP_SCALER.update()
     return loss.item()
 
 
 # -----------------------------------------------------------------------------
-#  Misc helpers
+# What to export when doing ``from src.train import *`` ------------------------
 # -----------------------------------------------------------------------------
-
-def ds_num_classes(data) -> int:
-    """Utility: infer number of classes from a PyG data object."""
-    return int(data.y.max().item() + 1)
+__all__ = [
+    "DEVICE",
+    "DTYPE",
+    "AMP_SCALER",
+    "EarlyStop",
+    "train_epoch",
+    "build_model",
+]
