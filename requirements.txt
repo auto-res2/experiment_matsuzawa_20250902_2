@@ -1,7 +1,11 @@
 torch
 torchvision
+timm
 numpy
 scipy
+pandas
+statsmodels
 matplotlib
 seaborn
-pandas
+tqdm
+scikit-learn
