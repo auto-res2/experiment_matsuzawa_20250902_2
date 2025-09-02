@@ -1,1 +1,12 @@
-# Please list the required python packages.
+torch
+torchvision
+numpy
+matplotlib
+seaborn
+tqdm
+scikit-learn
+fvcore
+ptflops
+memory_profiler
+avalanche-lib
+pandas
