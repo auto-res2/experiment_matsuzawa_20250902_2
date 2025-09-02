@@ -6,5 +6,82 @@
     "efficient image-text matching",
     "ANN cross-modal retrieval",
     "quantized image-text retrieval"
+  ],
+  "research_study_list": [
+    {
+      "title": "Multilateral Semantic Relations Modeling for Image Text Retrieval"
+    },
+    {
+      "title": "RA-CLIP: Retrieval Augmented Contrastive Language-Image Pre-Training"
+    },
+    {
+      "title": "Composing Object Relations and Attributes for Image-Text Matching"
+    },
+    {
+      "title": "Re-Imagen: Retrieval-Augmented Text-to-Image Generator"
+    },
+    {
+      "title": "Composed Image Retrieval with Text Feedback via Multi-grained Uncertainty Regularization"
+    },
+    {
+      "title": "Improving Cross-Modal Retrieval With Set of Diverse Embeddings"
+    },
+    {
+      "title": "CrossGET: Cross-Guided Ensemble of Tokens for Accelerating Vision-Language Transformers"
+    },
+    {
+      "title": "A Differentiable Semantic Metric Approximation in Probabilistic Embedding for Cross-Modal Retrieval"
+    },
+    {
+      "title": "ASIF: Coupled Data Turns Unimodal Models to Multimodal without Training"
+    },
+    {
+      "title": "Accept the Modality Gap: An Exploration in the Hyperbolic Space"
+    },
+    {
+      "title": "Fine-Grained Image-Text Matching by Cross-Modal Hard Aligning Network"
+    },
+    {
+      "title": "Composing Object Relations and Attributes for Image-Text Matching"
+    },
+    {
+      "title": "ASIF: Coupled Data Turns Unimodal Models to Multimodal without Training"
+    },
+    {
+      "title": "Improved Probabilistic Image-Text Representations"
+    },
+    {
+      "title": "MACK: Multimodal Aligned Conceptual Knowledge for Unpaired Image-text Matching"
+    },
+    {
+      "title": "A Differentiable Semantic Metric Approximation in Probabilistic Embedding for Cross-Modal Retrieval"
+    },
+    {
+      "title": "An End-To-End Graph Attention Network Hashing for Cross-Modal Retrieval"
+    },
+    {
+      "title": "Improving Cross-Modal Retrieval With Set of Diverse Embeddings"
+    },
+    {
+      "title": "Prototype-based Aleatoric Uncertainty Quantification for Cross-modal Retrieval"
+    },
+    {
+      "title": "Accept the Modality Gap: An Exploration in the Hyperbolic Space"
+    },
+    {
+      "title": "Composed Image Retrieval with Text Feedback via Multi-grained Uncertainty Regularization"
+    },
+    {
+      "title": "Disentangled Representation Learning for Unsupervised Neural Quantization"
+    },
+    {
+      "title": "You'll Never Walk Alone: A Sketch and Text Duet for Fine-Grained Image Retrieval"
+    },
+    {
+      "title": "ASIF: Coupled Data Turns Unimodal Models to Multimodal without Training"
+    },
+    {
+      "title": "Fine-Grained Image-Text Matching by Cross-Modal Hard Aligning Network"
+    }
   ]
 }
