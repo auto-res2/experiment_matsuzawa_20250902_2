@@ -539,5 +539,67 @@
         "experimental_info": "The core of the CLIP method involves jointly training an image encoder and a text encoder. The available pre-trained models cover various architectures and scales for both image and text encoders.\n\nImage Encoders:\n-   **Modified ResNet:** Includes variants like RN50, RN101, RN50x4, RN50x16, and RN50x64. This architecture features a 3-layer stem (three consecutive 3x3 convolutions with ReLU and BatchNorm, followed by an AvgPool2d), anti-aliasing strided convolutions where an AvgPool2d is prepended to convolutions with stride > 1, and a final AttentionPool2d layer instead of a global average pool. Bottleneck blocks are used for the residual layers.\n-   **Vision Transformer (ViT):** Includes variants like ViT-B/32, ViT-B/16, ViT-L/14, and ViT-L/14@336px. This architecture follows a standard ViT design with a patch embedding (Conv2d), class embedding, positional embedding, LayerNorm, a Transformer block (using ResidualAttentionBlock), and a final linear projection.\n\nText Encoder:\n-   **Transformer:** A standard Transformer architecture consisting of multiple ResidualAttentionBlock layers. It processes byte pair encoding (BPE) tokens, uses learned positional embeddings, and projects the features from the End-Of-Text (EOT) token activation to the embedding space.\n\nJoint Training Objective:\n-   The system learns a multi-modal embedding space. The training objective is to predict which of N x N possible (image, text) pairings in a batch are correct. This is achieved by maximizing cosine similarity between N real (image, text) pairs and minimizing it for N^2-N incorrect pairs. The `logit_scale` parameter, initialized as `np.log(1 / 0.07)`, represents a temperature parameter that is directly optimized during training, influencing the scaling of cosine similarities to produce logits for a symmetric cross-entropy loss (loss function not explicitly provided in the code but implied by the `forward` method's output).\n\nPreprocessing:\n-   **Image Preprocessing:** Images are resized to `n_px` (model-specific resolution, e.g., 224 or 336 for ViT-L/14@336px) using BICUBIC interpolation, then center-cropped to `n_px`. They are converted to RGB, transformed to a PyTorch tensor, and normalized using a fixed mean `(0.48145466, 0.4578275, 0.40821073)` and standard deviation `(0.26862954, 0.26130258, 0.27577711)`.\n-   **Text Tokenization:** Text is tokenized using a `SimpleTokenizer` which implements Byte Pair Encoding (BPE). Each text input is wrapped with `<|startoftext|>` and `<|endoftext|>` tokens. A fixed `context_length` of 77 is used for all models; longer texts are truncated if specified, otherwise an error is raised.\n\nInitialization:\n-   Model parameters are initialized from scratch with normal distributions (e.g., token embedding std 0.02, positional embedding std 0.01). Specific layers in ResNet bottlenecks and Transformer blocks also have tailored normal initialization. Weight conversion to fp16 is applied post-loading for efficiency, where applicable."
       }
     }
+  ],
+  "reference_research_study_list": [
+    {
+      "title": "Effective Conditioned and Composed Image Retrieval Combining CLIP-Based Features."
+    },
+    {
+      "title": "Zero-Shot Composed Image Retrieval with Textual Inversion."
+    },
+    {
+      "title": "Sketch Less for More: On-the-Fly Fine-Grained Sketch Based Image Retrieval."
+    },
+    {
+      "title": "Sketching without Worrying: Noise-Tolerant Sketch-Based Image Retrieval."
+    },
+    {
+      "title": "Adaptive Fine-Grained Sketch-Based Image Retrieval."
+    },
+    {
+      "title": "Language Models are Few-Shot Learners."
+    },
+    {
+      "title": "LASP: Text-to-Text Optimization for Language-Aware Soft Prompting of Vision & Language Models."
+    },
+    {
+      "title": "Learning Aligned Cross-Modal Representations from Weakly Aligned Data."
+    },
+    {
+      "title": "Learning to generate line drawings that convey geometry and semantics."
+    },
+    {
+      "title": "Partially Does It: Towards Scene-Level FG-SBIR with Partial Input."
+    },
+    {
+      "title": "FS-COCO: Towards Understanding of Freehand Sketches of Common Objects in Context."
+    },
+    {
+      "title": "SceneTrilogy: On Human Scene-Sketch and its Complementarity with Photo and Text."
+    },
+    {
+      "title": "Probabilistic Embeddings for Cross-Modal Retrieval."
+    },
+    {
+      "title": "“This is my unicorn, Fluffy”: Personalizing frozen vision-language representations."
+    },
+    {
+      "title": "Sketching with Style: Visual Search with Sketches and Aesthetic Context."
+    },
+    {
+      "title": "LiveSketch: Query Perturbations for Guided Sketch-based Visual Search."
+    },
+    {
+      "title": "ImageNet: A large-scale hierarchical image database."
+    },
+    {
+      "title": "An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale."
+    },
+    {
+      "title": "Semantically Tied Paired Cycle Consistency for Zero-Shot Sketch-based Image Retrieval."
+    },
+    {
+      "title": "Linking Image and Text with 2-Way Nets."
+    }
   ]
 }
