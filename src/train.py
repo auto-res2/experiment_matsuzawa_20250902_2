@@ -1,115 +1,214 @@
 """src/train.py
-Training utilities and model definitions extracted from the original monolithic
+Model definitions and training utilities extracted from the original monolithic
 script.
 """
 from __future__ import annotations
 
+import random
+from typing import List
+
+import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F  # noqa: F401 – might be useful for extensions
-from torch.utils.data import DataLoader
+import torch.nn.functional as F  # noqa: F401 – may be useful for user extension
 
-__all__ = [
-    "DummyVMambaTiny",
-    "DummyFlashSSMTiny",
-    "train_one_epoch",
-]
+# ---------------------------------------------------------------------------- #
+# Reproducibility helpers
+# ---------------------------------------------------------------------------- #
 
-
-# -----------------------------------------------------------------------------
-# 1.  Simplified placeholder models
-# -----------------------------------------------------------------------------
+SEEDS: List[int] = [0, 1, 2, 3]
 
 
-class DummyVMambaTiny(nn.Module):
-    """A tiny CNN pretending to be the baseline VMamba-Tiny.
+def set_seed(seed: int) -> None:
+    """Seed Python / NumPy / PyTorch (CPU & CUDA) for full reproducibility."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
-    We keep large feature maps so that the memory-benchmark logic in the
-    evaluation module still produces non-trivial numbers.
-    """
+# ---------------------------------------------------------------------------- #
+# 1. Mamba layers & blocks (baseline + Flash-SSM style)
+# ---------------------------------------------------------------------------- #
 
-    def __init__(self, channels: int = 64):
+
+class SimpleMambaLayer(nn.Module):
+    """Minimal Mamba layer (full-sequence scan).  Works on B×L×C tensors."""
+
+    def __init__(self, dim: int):
         super().__init__()
-        self.stem = nn.Sequential(
-            nn.Conv2d(3, channels, 3, 1, 1),
-            nn.BatchNorm2d(channels),
-            nn.ReLU(inplace=True),
-        )
-        blocks = []
-        for _ in range(4):
-            blocks += [
-                nn.Conv2d(channels, channels, 3, 1, 1, groups=channels),
-                nn.ReLU(inplace=True),
-            ]
-        self.blocks = nn.Sequential(*blocks)
-        self.avg = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(channels, 1000)
+        self.dim = dim
+        self.A = nn.Parameter(torch.randn(dim))
+        self.B = nn.Parameter(torch.randn(dim))
+        self.C = nn.Parameter(torch.randn(dim))
+        self.D = nn.Parameter(torch.randn(dim))
+        self.activation = nn.GELU()
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
-        x = self.stem(x)
-        x = self.blocks(x)
-        x = self.avg(x).flatten(1)
-        return self.fc(x)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # x: B L C
+        B, L, C = x.shape
+        h = torch.zeros(B, C, device=x.device, dtype=x.dtype)
+        outs = []
+        for t in range(L):
+            h = self.A * h + self.B * x[:, t, :]
+            y = self.C * h + self.D * x[:, t, :]
+            outs.append(y)
+        y = torch.stack(outs, dim=1)
+        return self.activation(y)
 
 
-class DummyFlashSSMTiny(nn.Module):
-    """A memory-efficient counterpart that uses fewer activations by design."""
+class ChunkedMambaLayer(nn.Module):
+    """Chunked prefix scan (Flash-SSM idea) – discards inner activations."""
 
-    def __init__(self, channels: int = 64):
+    def __init__(self, dim: int, chunk: int = 256):
         super().__init__()
-        self.stem = nn.Sequential(
-            nn.Conv2d(3, channels, 3, 2, 1),  # stride 2 – halves H and W
-            nn.BatchNorm2d(channels),
+        self.dim = dim
+        self.chunk = chunk
+        self.A = nn.Parameter(torch.randn(dim))
+        self.B = nn.Parameter(torch.randn(dim))
+        self.C = nn.Parameter(torch.randn(dim))
+        self.D = nn.Parameter(torch.randn(dim))
+        self.activation = nn.GELU()
+
+    def _scan_chunk(self, x: torch.Tensor, h0: torch.Tensor):
+        B, Lc, C = x.shape
+        h = h0
+        outs = []
+        for t in range(Lc):
+            h = self.A * h + self.B * x[:, t, :]
+            y = self.C * h + self.D * x[:, t, :]
+            outs.append(y)
+        y = torch.stack(outs, dim=1)
+        # Detach to avoid storing full history and save memory
+        return y, h.detach()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # x: B L C
+        B, L, C = x.shape
+        h = torch.zeros(B, C, device=x.device, dtype=x.dtype)
+        outputs = []
+        for start in range(0, L, self.chunk):
+            y, h = self._scan_chunk(x[:, start : start + self.chunk, :], h)
+            outputs.append(y)
+        y = torch.cat(outputs, dim=1)
+        return self.activation(y)
+
+
+class MambaBlock(nn.Module):
+    """Baseline residual block with full-sequence Mamba layer."""
+
+    def __init__(self, dim: int):
+        super().__init__()
+        self.ln = nn.LayerNorm(dim)
+        self.mamba = SimpleMambaLayer(dim)
+        self.ffn = nn.Sequential(
+            nn.LayerNorm(dim),
+            nn.Linear(dim, 4 * dim),
             nn.GELU(),
+            nn.Linear(4 * dim, dim),
         )
 
-        blocks = []
-        for _ in range(4):
-            blocks += [
-                nn.Conv2d(channels, channels, 3, 1, 1, groups=channels, bias=False),
-                nn.Conv2d(channels, channels, 1),
-                nn.GELU(),
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # x: B L C
+        x = x + self.mamba(self.ln(x))
+        x = x + self.ffn(x)
+        return x
+
+
+class FlashMambaBlock(nn.Module):
+    """Flash-SSM block – chunked layer + reversible residual coupling."""
+
+    def __init__(self, dim: int, chunk_len: int = 256):
+        super().__init__()
+        self.chunk_len = chunk_len
+        self.mamba = ChunkedMambaLayer(dim, chunk=chunk_len)
+        self.ln = nn.LayerNorm(dim)
+        # Lightweight mixing layer; avoids degeneration when using a reversible pattern
+        self.mix = nn.Linear(dim, dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # x: B L C
+        # Split channels into two halves (simplified reversible coupling)
+        x1, x2 = torch.chunk(x, 2, dim=-1)
+        y1 = x1 + self.mamba(self.ln(x2))
+        y2 = x2  # identity – can be reconstructed in backward if needed
+        y = torch.cat([y1, y2], dim=-1)
+        return y + self.mix(y)
+
+
+# ---------------------------------------------------------------------------- #
+# 2. Tiny Vision backbone built from the blocks above
+# ---------------------------------------------------------------------------- #
+
+
+class TinyVisionMamba(nn.Module):
+    """Patch-embedding → N blocks → CLS-head. Block class chooses baseline/flash."""
+
+    def __init__(
+        self,
+        block_cls,
+        depth: int = 4,
+        dim: int = 128,
+        num_classes: int = 1000,
+        chunk_len: int | None = 256,
+    ):
+        super().__init__()
+        self.patch = nn.Conv2d(3, dim, kernel_size=8, stride=8)  # 224→28×28=784 tokens
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, dim))
+        self.pos_embed = nn.Parameter(torch.zeros(1, 1 + 784, dim))
+        self.blocks = nn.ModuleList(
+            [
+                block_cls(dim, chunk_len) if block_cls is FlashMambaBlock else block_cls(dim)
+                for _ in range(depth)
             ]
-        self.blocks = nn.Sequential(*blocks)
-        self.avg = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(channels, 1000)
+        )
+        self.norm = nn.LayerNorm(dim)
+        self.head = nn.Linear(dim, num_classes)
+        nn.init.trunc_normal_(self.pos_embed, std=0.02)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
-        x = self.stem(x)
-        x = self.blocks(x)
-        x = self.avg(x).flatten(1)
-        return self.fc(x)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # x: B 3 H W
+        B = x.size(0)
+        x = self.patch(x)  # B  C H/8 W/8
+        x = x.flatten(2).transpose(1, 2)  # B  L  C  where L=784
+        cls = self.cls_token.expand(B, -1, -1)  # B 1 C
+        x = torch.cat([cls, x], dim=1) + self.pos_embed
+        for blk in self.blocks:
+            x = blk(x)
+        x = self.norm(x)
+        cls_out = x[:, 0]
+        return self.head(cls_out)
 
+# ---------------------------------------------------------------------------- #
+# 3. One-epoch training helper
+# ---------------------------------------------------------------------------- #
 
-# -----------------------------------------------------------------------------
-# 2.  Single-epoch training routine
-# -----------------------------------------------------------------------------
-
-def train_one_epoch(
-    model: nn.Module,
-    loader: DataLoader,
-    optimizer: torch.optim.Optimizer,
-    scaler: torch.cuda.amp.GradScaler | None = None,
-) -> None:
-    """Very short training loop (single epoch)."""
-
+def train_one_epoch(model: nn.Module, loader, optim) -> float:
+    """Runs a *single* epoch; returns elapsed time in seconds."""
     device = next(model.parameters()).device
-    model.train()
     criterion = nn.CrossEntropyLoss()
+    model.train()
+
+    start_t = torch.cuda.Event(enable_timing=True) if torch.cuda.is_available() else None
+    end_t = torch.cuda.Event(enable_timing=True) if torch.cuda.is_available() else None
+
+    if start_t is not None:
+        start_t.record()
+    else:
+        import time as _time
+        wall_start = _time.perf_counter()
 
     for imgs, labels in loader:
         imgs = imgs.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
+        optim.zero_grad(set_to_none=True)
+        out = model(imgs)
+        loss = criterion(out, labels)
+        loss.backward()
+        optim.step()
 
-        optimizer.zero_grad(set_to_none=True)
-        with torch.cuda.amp.autocast(enabled=scaler is not None):
-            out = model(imgs)
-            loss = criterion(out, labels)
-
-        if scaler is None:
-            loss.backward()
-            optimizer.step()
-        else:
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+    if end_t is not None:
+        end_t.record()
+        torch.cuda.synchronize()
+        elapsed_ms = start_t.elapsed_time(end_t)
+        return elapsed_ms / 1e3  # seconds
+    else:
+        import time as _time
+        return _time.perf_counter() - wall_start

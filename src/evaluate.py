@@ -1,127 +1,109 @@
 """src/evaluate.py
-Evaluation helpers: memory benchmark, accuracy calculation and plotting
-utilities.
+Evaluation / analysis utilities extracted from the original experimental script.
 """
 from __future__ import annotations
 
-import typing as _t
+import math
+from typing import Dict, List, Tuple
 
-import numpy as np  # noqa: F401 – reserved for future use
+import numpy as np
+import pandas as pd
+import seaborn as sns
 import torch
+import torch.nn as nn
+from scipy import stats
 import matplotlib
 
-# Use a head-less backend suitable for server environments BEFORE importing
-# pyplot.  This avoids the need for an X-server.
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402  pylint: disable=wrong-import-position
-import seaborn as sns  # noqa: E402  pylint: disable=wrong-import-position
+matplotlib.use("Agg")  # head-less backends for servers / CI
+import matplotlib.pyplot as plt
 
 sns.set(style="whitegrid", font_scale=1.3)
 
-__all__ = [
-    "memory_benchmark",
-    "evaluate",
-    "bar_plot",
-]
+# ---------------------------------------------------------------------------- #
+# Core evaluation helpers
+# ---------------------------------------------------------------------------- #
+
+def memory_benchmark(model: nn.Module, batch_size: int = 8, device: str = "cuda") -> float:
+    """Return peak CUDA memory in **GB** for a single forward pass."""
+    if device == "cpu" or not torch.cuda.is_available():
+        # Cannot measure accurately on CPU; return NaN so downstream stats ignore it
+        return float("nan")
+
+    model.eval()
+    torch.cuda.reset_peak_memory_stats()
+
+    dummy = torch.randn(batch_size, 3, 224, 224, device=device)
+    with torch.no_grad():
+        model(dummy)
+
+    torch.cuda.synchronize()
+    mem = torch.cuda.max_memory_allocated() / 1024**3
+    return round(mem, 3)
 
 
-# -----------------------------------------------------------------------------
-# 1.  GPU memory benchmark
-# -----------------------------------------------------------------------------
-
-@torch.no_grad()
-def memory_benchmark(
-    model: torch.nn.Module,
-    img_size: int = 224,
-    start_bs: int = 16,
-    max_bs: int = 128,
-) -> int:
-    """Find the largest batch-size that fits into GPU memory without OOM.
-
-    Because we only use placeholder models, the function also caps absolute
-    batch size to avoid needlessly allocating gigabytes of memory.
-    """
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = model.to(device).eval()
-
-    bs = start_bs
-    last_good = bs
-    while bs <= max_bs:
-        try:
-            dummy = torch.randn(bs, 3, img_size, img_size, device=device)
-            _ = model(dummy)  # forward pass – we only care about memory usage
-            if device.type == "cuda":
-                torch.cuda.synchronize(device)
-            last_good = bs
-            bs *= 2
-        except RuntimeError as err:  # pragma: no cover – hardware dependent
-            if "out of memory" in str(err).lower():
-                break
-            raise err
-        finally:
-            if device.type == "cuda":
-                torch.cuda.empty_cache()
-    return last_good
-
-
-# -----------------------------------------------------------------------------
-# 2.  Accuracy evaluation
-# -----------------------------------------------------------------------------
-
-def evaluate(model: torch.nn.Module, loader: "torch.utils.data.DataLoader") -> float:  # noqa: D401, F722
-    """Top-1 accuracy in percent."""
-
+def evaluate(model: nn.Module, loader) -> float:
+    """Top-1 accuracy (%) on supplied loader."""
     device = next(model.parameters()).device
     model.eval()
-    correct = 0
-    total = 0
-
+    hits = total = 0
     with torch.no_grad():
         for imgs, labels in loader:
-            imgs = imgs.to(device)
-            labels = labels.to(device)
-            out = model(imgs)
-            preds = out.argmax(1)
-            correct += (preds == labels).sum().item()
+            imgs = imgs.to(device, non_blocking=True)
+            labels = labels.to(device, non_blocking=True)
+            pred = model(imgs).argmax(1)
+            hits += (pred == labels).sum().item()
             total += labels.numel()
+    return 100.0 * hits / total
 
-    return 100.0 * correct / total if total else 0.0
+# ---------------------------------------------------------------------------- #
+# Statistical helpers & visualisation
+# ---------------------------------------------------------------------------- #
+
+def ci95(arr: List[float]) -> Tuple[float, float]:
+    m = float(np.mean(arr))
+    sem = float(stats.sem(arr))
+    ci = 1.96 * sem if len(arr) > 1 else 0.0
+    return m, ci
 
 
-# -----------------------------------------------------------------------------
-# 3.  Plotting helpers
-# -----------------------------------------------------------------------------
+def ttest(a: List[float], b: List[float]) -> float:
+    return float(stats.ttest_rel(a, b).pvalue) if len(a) == len(b) else float("nan")
 
-def bar_plot(
-    data: dict[str, float],
-    ylabel: str,
-    title: str,
-    fname: str,
-) -> None:
-    """Horizontal bar plot with values annotated on top of the bars."""
 
-    keys = list(data.keys())
-    values = list(data.values())
+def print_bar(title: str) -> None:
+    bar = "=" * 80
+    print(f"\n{bar}\n{title}\n{bar}")
+
+
+def save_bar_plot(data: Dict[str, float], ylabel: str, title: str, fname: str) -> None:
+    keys, vals = list(data.keys()), list(data.values())
     palette = sns.color_palette("Set2", len(keys))
-
     fig, ax = plt.subplots(figsize=(6, 4))
-    bars = ax.bar(keys, values, color=palette)
-    for bar, val in zip(bars, values):
-        ax.text(
-            bar.get_x() + bar.get_width() / 2,
-            val * 1.01,
-            f"{val:.2f}",
-            ha="center",
-            va="bottom",
-            fontsize=10,
-        )
+    bars = ax.bar(keys, vals, color=palette)
+    for bar, val in zip(bars, vals):
+        ax.text(bar.get_x() + bar.get_width() / 2, val * 1.01, f"{val:.2f}",
+                ha="center", va="bottom", fontsize=9)
     ax.set_ylabel(ylabel)
     ax.set_title(title)
     plt.tight_layout()
+    plt.legend(keys, frameon=False)
+    plt.savefig(fname, bbox_inches="tight", format="pdf")
+    plt.close()
+
+# ---------------------------------------------------------------------------- #
+# Convenience for Exp-2 (model memory fitting)
+# ---------------------------------------------------------------------------- #
+
+def try_init_model(depth: int, dim: int, block_cls, device: str):
+    """Attempt to instantiate & benchmark a model.  Returns (fits, peak_ram)."""
+    from train import TinyVisionMamba  # local import to avoid circularity
+
     try:
-        plt.savefig(fname, bbox_inches="tight", format="pdf")
-    except Exception as err:  # pragma: no cover – I/O
-        print(f"[Warning] Could not save figure {fname}: {err}")
-    finally:
-        plt.close(fig)
+        model = TinyVisionMamba(block_cls, depth=depth, dim=dim).to(device)
+        mem = memory_benchmark(model, batch_size=8, device=device)
+        return True, mem
+    except RuntimeError as exc:
+        if "out of memory" in str(exc).lower():
+            torch.cuda.empty_cache()
+            return False, None
+        raise exc

@@ -1,281 +1,242 @@
 """src/main.py
-Entry point that orchestrates all experiments.  Executed via
-`python -m src.main`.
+Main orchestration script – reproduces the behaviour of the original monolithic
+file while re-using the newly modularised code.
+It can be executed via `python -m src.main` from project root.
 """
 from __future__ import annotations
 
-import itertools
-import random
-import time
-from typing import Dict  # noqa: F401 – kept for clarity
+import json
+from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import torch
 
-from .train import (
-    DummyFlashSSMTiny,
-    DummyVMambaTiny,
+from train import (
+    SEEDS,
+    FlashMambaBlock,
+    MambaBlock,
+    TinyVisionMamba,
+    set_seed,
     train_one_epoch,
 )
-from .evaluate import bar_plot, evaluate, memory_benchmark
-from .preprocess import build_loader
+from preprocess import build_loader
+from evaluate import (
+    ci95,
+    evaluate,
+    memory_benchmark,
+    print_bar,
+    save_bar_plot,
+    ttest,
+    try_init_model,
+)
 
-# -----------------------------------------------------------------------------
-# Helper – pretty experiment header
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------------
+# EXPERIMENT 1 – Baseline vs Flash on identical architecture
+# ---------------------------------------------------------------------------------
 
-def _print_experiment_description(title: str, spec: str) -> None:
-    bar = "=" * 80
-    print(f"\n{bar}\n{title}\n{bar}\n{spec}\n")
-
-
-# -----------------------------------------------------------------------------
-# 1.  Experiment 1 – Memory & Throughput Benchmark
-# -----------------------------------------------------------------------------
-
-def run_experiment_1() -> None:  # noqa: D401
-    """Compare baseline VMamba-Tiny with Flash-SSM-Tiny."""
-
-    description = (
-        "Experiment-1 compares baseline VMamba-Tiny trained with gradient-checkpointing "
-        "against Flash-SSM-Tiny (chunk=256, reversible, no sparse gate). "
-        "The goal is to measure peak GPU memory, throughput and Top-1 accuracy on the "
-        "same architecture."
+def experiment_1():
+    title = "EXPERIMENT 1 – MEMORY, SPEED & ACCURACY ON IDENTICAL NETWORK"
+    desc = (
+        "Baseline uses full-sequence Mamba blocks; Flash variant replaces them "
+        "with chunk-prefix-scan + reversible coupling (chunk=256).  Each seed "
+        "trains one real epoch on a FakeData ImageNet-like set so numbers are "
+        "measured live – nothing is hard-coded."
     )
-    _print_experiment_description(
-        "EXPERIMENT 1 — MEMORY & THROUGHPUT BENCHMARK", description
-    )
+    print_bar(title)
+    print(desc)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    baseline_model = DummyVMambaTiny().to(device)
-    flash_model = DummyFlashSSMTiny().to(device)
+    results = {"baseline": [], "flash": []}
 
-    # ---------------- Batch-size search ----------------
-    bs_base = memory_benchmark(baseline_model, start_bs=8, max_bs=64)
-    bs_flash = memory_benchmark(flash_model, start_bs=8, max_bs=128)
-    print(f"Largest batch that fits – Baseline: {bs_base}, Flash-SSM: {bs_flash}")
+    for seed in SEEDS:
+        set_seed(seed)
 
-    # ---------------- Training (1 epoch demo) ----------------
-    loaders = {
-        "baseline": build_loader(bs_base),
-        "flash": build_loader(bs_flash),
+        # Models -----------------------------------------------------------------
+        base_model = TinyVisionMamba(MambaBlock, depth=4, dim=128).to(device)
+        flash_model = TinyVisionMamba(FlashMambaBlock, depth=4, dim=128, chunk_len=256).to(device)
+
+        # Data -------------------------------------------------------------------
+        train_loader = build_loader(batch_size=32, num_samples=2048)
+        val_loader = build_loader(batch_size=64, num_samples=512)
+
+        # Baseline ---------------------------------------------------------------
+        optim_b = torch.optim.AdamW(base_model.parameters(), lr=1e-3)
+        mem_b = memory_benchmark(base_model, batch_size=32, device=device)
+        t_b = train_one_epoch(base_model, train_loader, optim_b)
+        acc_b = evaluate(base_model, val_loader)
+        results["baseline"].append({"mem": mem_b, "ips": len(train_loader.dataset) / t_b, "acc": acc_b})
+
+        # Flash ------------------------------------------------------------------
+        optim_f = torch.optim.AdamW(flash_model.parameters(), lr=1e-3)
+        mem_f = memory_benchmark(flash_model, batch_size=32, device=device)
+        t_f = train_one_epoch(flash_model, train_loader, optim_f)
+        acc_f = evaluate(flash_model, val_loader)
+        results["flash"].append({"mem": mem_f, "ips": len(train_loader.dataset) / t_f, "acc": acc_f})
+
+    # Aggregate statistics -------------------------------------------------------
+    def gather(key):
+        return [d[key] for d in results["baseline"]], [d[key] for d in results["flash"]]
+
+    mem_b, mem_f = gather("mem")
+    ips_b, ips_f = gather("ips")
+    acc_b, acc_f = gather("acc")
+
+    summary = {
+        "Peak-RAM (GB)": {"baseline": ci95(mem_b), "flash": ci95(mem_f), "p": ttest(mem_b, mem_f)},
+        "Images/s": {"baseline": ci95(ips_b), "flash": ci95(ips_f), "p": ttest(ips_b, ips_f)},
+        "Top-1 (%)": {"baseline": ci95(acc_b), "flash": ci95(acc_f), "p": ttest(acc_b, acc_f)},
     }
 
-    results: dict[str, dict[str, float]] = {}
-    for name, model in zip(["baseline", "flash"], [baseline_model, flash_model]):
-        loader = loaders[name]
-        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
-        start = time.perf_counter()
-        train_one_epoch(model, loader, optimizer)
-        if device.type == "cuda":
-            torch.cuda.synchronize(device)
-        duration = time.perf_counter() - start
-
-        imgs_per_s = len(loader.dataset) / duration
-        peak_mem = (
-            torch.cuda.max_memory_allocated(device) / 1024 ** 3
-            if device.type == "cuda"
-            else 0.0
+    print("\nExperimental numerical data (mean±CI95):")
+    for k, v in summary.items():
+        print(
+            f"  {k:12s}  Baseline: {v['baseline'][0]:.2f}±{v['baseline'][1]:.2f}   "
+            f"Flash: {v['flash'][0]:.2f}±{v['flash'][1]:.2f}   p={v['p']:.3f}"
         )
-        if device.type == "cuda":
-            torch.cuda.reset_peak_memory_stats(device)
 
-        acc = evaluate(model, build_loader(bs_base))  # eval with fixed BS for fairness
-        results[name] = {
-            "batch": bs_base if name == "baseline" else bs_flash,
-            "peak_mem": round(peak_mem, 2),
-            "imgs/s": round(imgs_per_s, 1),
-            "top1": round(acc, 2),
-        }
-
-    # Synthetic publication-quality overrides (real training is skipped)
-    results["baseline"].update({"peak_mem": 14.2, "imgs/s": 58, "top1": 81.5})
-    results["flash"].update({"peak_mem": 5.0, "imgs/s": 70, "top1": 81.6})
-
-    # ---------------- Numerical table ----------------
-    print("\nExperimental Data (Exp-1):")
-    for k, v in results.items():
-        print(f"  {k:8s} -> {v}")
-
-    # ---------------- Figures ----------------
-    bar_plot(
-        {"VMamba": results["baseline"]["peak_mem"], "Flash-SSM": results["flash"]["peak_mem"]},
-        ylabel="Peak Memory (GB)",
-        title="Peak GPU Memory – Exp-1",
-        fname="memory_peak_vmamba_vs_flash.pdf",
-    )
-
-    bar_plot(
-        {"VMamba": results["baseline"]["imgs/s"], "Flash-SSM": results["flash"]["imgs/s"]},
-        ylabel="Images / second",
-        title="Throughput – Exp-1",
-        fname="throughput_vmamba_vs_flash.pdf",
-    )
-
-    bar_plot(
-        {"VMamba": results["baseline"]["top1"], "Flash-SSM": results["flash"]["top1"]},
-        ylabel="Top-1 (%)",
-        title="Validation Accuracy – Exp-1",
-        fname="top1_accuracy_vmamba_vs_flash.pdf",
-    )
+    # Figures -------------------------------------------------------------------
+    save_bar_plot({"Baseline": np.mean(mem_b), "Flash-SSM": np.mean(mem_f)}, "Peak RAM (GB)", "Peak GPU memory – Exp-1", "memory_peak.pdf")
+    save_bar_plot({"Baseline": np.mean(ips_b), "Flash-SSM": np.mean(ips_f)}, "Images / s", "Throughput – Exp-1", "throughput.pdf")
+    save_bar_plot({"Baseline": np.mean(acc_b), "Flash-SSM": np.mean(acc_f)}, "Top-1 (%)", "Accuracy – Exp-1", "accuracy.pdf")
 
     print("\nFigures saved:")
-    for fn in [
-        "memory_peak_vmamba_vs_flash.pdf",
-        "throughput_vmamba_vs_flash.pdf",
-        "top1_accuracy_vmamba_vs_flash.pdf",
-    ]:
-        print(f"  {fn}")
+    for fn in ["memory_peak.pdf", "throughput.pdf", "accuracy.pdf"]:
+        print("  ", fn)
+
+    return summary
 
 
-# -----------------------------------------------------------------------------
-# 2.  Experiment 2 – Scaling to Bigger Models (synthetic)
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------------
+# EXPERIMENT 2 – Larger depth/state under 16 GB
+# ---------------------------------------------------------------------------------
 
-def run_experiment_2() -> None:  # noqa: D401
-    """Synthetic scaling experiment to demonstrate memory savings."""
-
-    description = (
-        "Experiment-2 demonstrates that Flash-SSM can accommodate deeper/wider models "
-        "on a 16 GB T4 while baseline VMamba OOMs.  We emulate two bigger models: "
-        "TinyPlus-32 and Small-32."
+def experiment_2():
+    title = "EXPERIMENT 2 – SCALING DEPTH/STATE ON 16 GB"
+    desc = (
+        "We test whether larger Tiny-Plus-32 and Small-32 models fit in 16 GB "
+        "when using Flash-SSM blocks, and whether the baseline implementation "
+        "OOMs.  Only memory is probed here (single forward pass)."
     )
-    _print_experiment_description("EXPERIMENT 2 — SCALING DEPTH/STATE", description)
+    print_bar(title)
+    print(desc)
 
-    # Synthetic dataset – numbers taken from the original monolithic script
-    models = [
-        "VMamba-TinyPlus-32",
-        "Flash-TinyPlus-32",
-        "VMamba-Small-32",
-        "Flash-Small-32",
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    from train import FlashMambaBlock, MambaBlock  # local import to avoid circular
+
+    configs = [
+        ("Baseline-TinyPlus-32", 40, 256, MambaBlock),
+        ("Flash-TinyPlus-32", 40, 256, FlashMambaBlock),
+        ("Baseline-Small-32", 40, 320, MambaBlock),
+        ("Flash-Small-32", 40, 320, FlashMambaBlock),
     ]
-    results = {
-        "VMamba-TinyPlus-32": {"fits": False, "peak_mem": None, "top1": None},
-        "Flash-TinyPlus-32": {"fits": True, "peak_mem": 13.2, "top1": 83.4},
-        "VMamba-Small-32": {"fits": False, "peak_mem": None, "top1": None},
-        "Flash-Small-32": {"fits": True, "peak_mem": 14.0, "top1": 84.1},
-    }
 
-    print("Experimental Data (Exp-2):")
-    for m in models:
-        print(f"  {m:18s} -> {results[m]}")
+    records = {}
+    for name, depth, dim, block in configs:
+        fits, mem = try_init_model(depth, dim, block, device)
+        records[name] = {"fits": fits, "peak_ram": mem}
+        status = "OK" if fits else "OOM"
+        print(f"  {name:20s}  ->  {status}  Peak-RAM: {mem}")
 
-    # Figures – only for models that fit
-    acc_data = {m: d["top1"] for m, d in results.items() if d["fits"]}
-    mem_data = {m: d["peak_mem"] for m, d in results.items() if d["fits"]}
+    # Plot only the models that fit ---------------------------------------------
+    mem_plot = {n: v["peak_ram"] for n, v in records.items() if v["fits"]}
+    if mem_plot:
+        save_bar_plot(mem_plot, "Peak RAM (GB)", "Memory of larger models – Exp-2", "scaling_memory.pdf")
+        print("\nFigure saved:\n  scaling_memory.pdf")
 
-    bar_plot(
-        acc_data,
-        ylabel="Top-1 (%)",
-        title="Accuracy – Larger Models (Exp-2)",
-        fname="top1_accuracy_scaling.pdf",
+    return records
+
+
+# ---------------------------------------------------------------------------------
+# EXPERIMENT 3 – 2×4×2 ablation grid
+# ---------------------------------------------------------------------------------
+
+def experiment_3():
+    title = "EXPERIMENT 3 – ABLATION OF REVERSIBLE / CHUNK / GATE"
+    desc = (
+        "Runs a 16-config grid (reversible ON/OFF, chunk length, sparse gate) "
+        "for a single epoch on FakeData-100 to gather memory & speed numbers."
     )
-    bar_plot(
-        mem_data,
-        ylabel="Peak Memory (GB)",
-        title="Memory – Larger Models (Exp-2)",
-        fname="peak_memory_scaling.pdf",
-    )
+    print_bar(title)
+    print(desc)
 
-    print("\nFigures saved:")
-    for fn in ["top1_accuracy_scaling.pdf", "peak_memory_scaling.pdf"]:
-        print(f"  {fn}")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
 
+    rev_opts = [True, False]
+    chunk_opts = [64, 128, 256, 512]
+    gate_opts = [None, 0.5]  # gate is a no-op in this simplified demo
 
-# -----------------------------------------------------------------------------
-# 3.  Experiment 3 – Ablation Study (synthetic)
-# -----------------------------------------------------------------------------
+    rows = []
+    for rev in rev_opts:
+        for W in chunk_opts:
+            for gate in gate_opts:
+                block_cls = FlashMambaBlock if rev else MambaBlock
+                model = TinyVisionMamba(block_cls, depth=4, dim=128, chunk_len=W).to(device)
+                train_loader = build_loader(batch_size=32, num_samples=1024)
+                optim = torch.optim.AdamW(model.parameters(), lr=1e-3)
+                mem = memory_benchmark(model, batch_size=32, device=device)
+                t = train_one_epoch(model, train_loader, optim)
+                ips = len(train_loader.dataset) / t
+                rows.append({"rev": rev, "W": W, "gate": "none" if gate is None else gate, "mem": mem, "ips": ips})
 
-def run_experiment_3() -> None:  # noqa: D401
-    """2×4×2 grid search ablating Flash-SSM components (synthetic numbers)."""
+    df = pd.DataFrame(rows)
+    print("\nFirst five measured rows:")
+    print(df.head())
 
-    description = (
-        "Experiment-3 runs a 2×4×2 grid (reversible, chunk-length, sparse-gate) on "
-        "ImageNet-100 to attribute gains to each Flash-SSM component.  Results are "
-        "simulated for brevity."
-    )
-    _print_experiment_description("EXPERIMENT 3 — ABLATION OF COMPONENTS", description)
+    # 3-way ANOVA (memory & speed) ----------------------------------------------
+    def anova(col):
+        groups = []
+        for rev in rev_opts:
+            groups.append(df[df["rev"] == rev][col])
+        for W in chunk_opts:
+            groups.append(df[df["W"] == W][col])
+        for g in ["none", 0.5]:
+            groups.append(df[df["gate"] == g][col])
+        return stats.f_oneway(*groups).pvalue
 
-    rev_options = [True, False]
-    w_options = [64, 128, 256, 512]
-    gate_options = [None, 0.5]
+    p_mem = anova("mem")
+    p_ips = anova("ips")
+    print(f"\nANOVA p-values  Peak-RAM: {p_mem:.4f}   Images/s: {p_ips:.4f}")
 
-    base_mem = 5.0
-    base_speed = 70.0
-    base_acc = 81.6
-
-    records: list[dict[str, float | bool | int | None]] = []
-    for rev, w, gate in itertools.product(rev_options, w_options, gate_options):
-        mem = base_mem + (0.5 if not rev else 0.0) + ((w / 256) - 1) * 0.8
-        speed = base_speed - (0.5 if w == 64 else 0.0) + (0.5 if gate == 0.5 else 0.0)
-        acc = (
-            base_acc
-            - (0.1 if gate == 0.5 else 0.0)
-            - (0.05 if w == 64 else 0.0)
-            + (0.02 if rev else 0.0)
-        )
-        records.append(
-            {
-                "rev": rev,
-                "W": w,
-                "gate": gate,
-                "mem": round(mem, 2),
-                "speed": round(speed, 1),
-                "acc": round(acc, 2),
-            }
-        )
-
-    # Print first 8 rows for brevity
-    print("Experimental Data (Exp-3) – first 8 rows:")
-    for row in records[:8]:
-        print("  ", row)
-    print(f"  ... (total rows = {len(records)})")
-
-    # Scatter plot – memory vs speed, colour = accuracy
-    import matplotlib.pyplot as plt  # local import to avoid backend conflicts
+    # Scatter plot --------------------------------------------------------------
+    import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots(figsize=(6, 5))
-    mem_vals = [r["mem"] for r in records]
-    speed_vals = [r["speed"] for r in records]
-    acc_vals = [r["acc"] for r in records]
-
-    scatter = ax.scatter(mem_vals, speed_vals, c=acc_vals, cmap="viridis", s=80)
-    for i, r in enumerate(records):
-        ax.text(
-            mem_vals[i] + 0.05,
-            speed_vals[i] + 0.05,
-            f"{r['W']}/{('R' if r['rev'] else 'N')}",
-            fontsize=6,
-        )
-    ax.set_xlabel("Peak Memory (GB)")
+    sc = ax.scatter(df["mem"], df["ips"], c=df["W"], cmap="viridis", s=80)
+    ax.set_xlabel("Peak RAM (GB)")
     ax.set_ylabel("Images / s")
-    ax.set_title("Memory vs Speed vs Accuracy (Exp-3)")
-    plt.colorbar(scatter, label="Top-1 (%)")
+    ax.set_title("Exp-3  Memory vs Speed (colour = chunk)")
+    plt.colorbar(sc, label="Chunk length")
     plt.tight_layout()
-    plt.savefig("memory_vs_speed_ablation.pdf", bbox_inches="tight", format="pdf")
+    plt.savefig("ablation_scatter.pdf", format="pdf", bbox_inches="tight")
     plt.close()
+    print("\nFigure saved:\n  ablation_scatter.pdf")
 
-    print("\nFigure saved:")
-    print("  memory_vs_speed_ablation.pdf")
+    return df
 
 
-# -----------------------------------------------------------------------------
-# 4.  Main entry point
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------------
+# MAIN ENTRY POINT
+# ---------------------------------------------------------------------------------
 
-def main() -> None:  # noqa: D401
-    """Seed RNGs and launch all experiments."""
+def main():
+    torch.set_float32_matmul_precision("high")  # speed on A100 / T4
 
-    torch.manual_seed(0)
-    random.seed(0)
-    np.random.seed(0)
+    exp1_summary = experiment_1()
+    exp2_records = experiment_2()
+    exp3_df = experiment_3()
 
-    run_experiment_1()
-    run_experiment_2()
-    run_experiment_3()
+    # Persist raw metrics --------------------------------------------------------
+    Path("logs").mkdir(exist_ok=True)
+    with open("logs/exp1_summary.json", "w") as f:
+        json.dump(exp1_summary, f, indent=2)
+    with open("logs/exp2_records.json", "w") as f:
+        json.dump(exp2_records, f, indent=2)
+    exp3_df.to_csv("logs/exp3_ablation.csv", index=False)
 
-    print("\nAll experiments finished.  PDF figures written to current directory.")
+    print("\nAll experiments finished – raw metrics saved to ./logs and figures to PDFs.")
 
 
 if __name__ == "__main__":
