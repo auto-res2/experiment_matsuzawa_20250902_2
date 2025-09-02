@@ -1,4 +1,3 @@
-```python
 """src/preprocess.py
 Data-related utilities: downloading, extraction, dataset wrappers and
 DataLoader builders.
@@ -291,4 +290,3 @@ def build_dataloaders(dataset_name: str, batch_size: int):
         test_set, batch_size=batch_size * 2, shuffle=False, num_workers=4, pin_memory=True
     )
     return train_loader, val_loader, test_loader
-```
