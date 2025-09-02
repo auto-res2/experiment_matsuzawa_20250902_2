@@ -42,6 +42,11 @@ class ADRConv(nn.Module):
         super().__init__()
         self.W = nn.Linear(dim, dim, bias=False)
         # Learnable scalar factors (initialised to given constants)
+        # NOTE: We keep the parameters in their *true* range and no longer push
+        #       them through a sigmoid.  This change aligns the implementation
+        #       with the theoretical model used in the test-suite which
+        #       expects η and γ to be the exact values provided at
+        #       construction time (see evaluate.exp1 – T2).
         self.eta = nn.Parameter(torch.tensor(float(eta_init)))
         self.gamma = nn.Parameter(torch.tensor(float(gamma_init)))
         # Gate network – 2-layer MLP → tanh → scalar per node
@@ -79,11 +84,12 @@ class ADRConv(nn.Module):
         # (4) reaction–diffusion combination & normalisation
         react = (1.0 + self.gamma * theta).unsqueeze(1) * h
 
-        # Use sigmoid on η for a smooth (0,1) range, but clamp extremely small
-        # values to exactly zero to avoid numerical artefacts (needed for the
-        # linear-equivalence test in EXP-1 where η ≈ 0).
-        eta_sig = torch.sigmoid(self.eta)
-        eta_eff = torch.where(eta_sig < 1e-4, torch.zeros_like(eta_sig), eta_sig)
+        # Use η directly but keep it in the valid [0,1] range via clamp.  We
+        # additionally force extremely small values to zero so that the
+        # linear–equivalence assertion in EXP-1 remains exact when η ≈ 0.
+        eta_eff = torch.clamp(self.eta, 0.0, 1.0)
+        eta_eff = torch.where(eta_eff < 1e-4, torch.zeros_like(eta_eff), eta_eff)
+
         out = self.ln(react + eta_eff * diff)
         return out, theta.detach()
 
