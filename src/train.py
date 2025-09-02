@@ -47,10 +47,11 @@ def accuracy(logits: torch.Tensor, y: torch.Tensor) -> float:
 
 
 class EnvCluster:
-    """Unsupervised environment discovery via mini-batch spectral clustering."""
+    """Unsupervised environment discovery via mini-batch clustering (K-Means)."""
 
     def __init__(self, emb_dim: int = 128, num_clusters: int = 8):
-        from sklearn.cluster import SpectralClustering  # local import to avoid heavy cost when unused
+        # Local import keeps import-time lightweight when MUCD is unused
+        from sklearn.cluster import MiniBatchKMeans  # pylint: disable=import-error
 
         self.emb_dim = emb_dim
         self.num_clusters = num_clusters
@@ -63,9 +64,13 @@ class EnvCluster:
         ).to(DEVICE)
         for p in self.proj.parameters():
             p.requires_grad = False
-        self._clusterer = None  # will be fitted each epoch
-        self._SpectralClustering = SpectralClustering  # keep reference
+        # will be instantiated each epoch inside .fit()
+        self._ClustererCls = MiniBatchKMeans  # keep reference
+        self._clusterer: MiniBatchKMeans | None = None
 
+    # ------------------------------------------------------------------
+    # Feature extraction helpers
+    # ------------------------------------------------------------------
     @torch.no_grad()
     def _embed_batch(self, x: torch.Tensor) -> torch.Tensor:
         f = self.encoder(x)
@@ -78,27 +83,30 @@ class EnvCluster:
         feat = torch.cat([z, power], dim=1)
         return feat.cpu()
 
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
     def fit(self, loader: DataLoader):
-        """Fit clustering model using all samples from the provided loader."""
+        """Fit clustering model using all samples from *loader*."""
         feats = []
         for xb, _ in loader:
             xb = xb.to(DEVICE, non_blocking=True)
             feats.append(self._embed_batch(xb))
         feats = torch.cat(feats, dim=0).numpy()
-        # fit spectral clustering each epoch (fresh model)
-        self._clusterer = self._SpectralClustering(
+        # Re-initialise fresh MiniBatchKMeans each epoch
+        self._clusterer = self._ClustererCls(
             n_clusters=self.num_clusters,
-            affinity="nearest_neighbors",
-            n_neighbors=10,
+            batch_size=1024,
             random_state=0,
         ).fit(feats)
 
     @torch.no_grad()
     def assign(self, x: torch.Tensor) -> torch.Tensor:
+        """Return cluster assignments for the given mini-batch *x*."""
         assert self._clusterer is not None, "Clusterer not fitted – call `.fit()` first."
         feats = self._embed_batch(x)
         labels = self._clusterer.predict(feats.numpy())
-        return torch.tensor(labels, device=x.device)
+        return torch.tensor(labels, device=x.device, dtype=torch.long)
 
 
 class DualPerturber(nn.Module):

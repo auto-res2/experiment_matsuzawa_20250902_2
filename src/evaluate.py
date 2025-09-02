@@ -15,7 +15,8 @@ import seaborn as sns
 # Simple bar plot helper used in toy experiment
 # -----------------------------------------------------------------------------
 
-SAVE_DIR = Path(".research/iteration2/images")
+# Requirement: save all images to .research/iteration3/images (see task prompt)
+SAVE_DIR = Path(".research/iteration3/images")
 SAVE_DIR.mkdir(parents=True, exist_ok=True)
 
 
