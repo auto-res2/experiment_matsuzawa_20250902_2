@@ -1,6 +1,14 @@
+```python
 """src/preprocess.py
 Data-related utilities: downloading, extraction, dataset wrappers and
 DataLoader builders.
+
+Patch note (2025-09-02):
+    • Fixed WaterbirdsDataset path resolver – images were looked up under a
+      duplicated directory segment (…/waterbird_complete95_forest2water2/
+      waterbird_complete95_forest2water2/…).  We now try both
+      <base_dir>/<rel_path> and <images_root>/<rel_path> and pick the one
+      that exists, preventing FileNotFoundError in DataLoader workers.
 """
 from __future__ import annotations
 
@@ -125,7 +133,6 @@ class WaterbirdsDataset(Dataset):
         #           waterbird_complete95_forest2water2/     <- images_root
         #               forest/
         #               water/
-        # We therefore look for *metadata.csv* one level below `root`.
         # ------------------------------------------------------------------
         base_dir = root / "waterbird_complete95_forest2water2"
         meta_file = base_dir / "metadata.csv"
@@ -145,7 +152,27 @@ class WaterbirdsDataset(Dataset):
         df = pd.read_csv(meta_file)
         split_map = {0: "train", 1: "val", 2: "test"}
         df = df[df.split.apply(lambda x: split_map[x] == split)].reset_index(drop=True)
-        self.paths = [images_root / p for p in df["img_filename"].tolist()]
+
+        # ------------------------------------------------------------------
+        # Resolve image paths robustly – handle cases where `img_filename`
+        # already contains the inner directory segment (this previously led to
+        # duplicated path components and FileNotFoundError).
+        # ------------------------------------------------------------------
+        def _resolve(rel_path: str) -> Path:
+            p1 = images_root / rel_path  # most common case
+            if p1.exists():
+                return p1
+            p2 = base_dir / rel_path     # fallback – rel already includes sub-dir
+            if p2.exists():
+                return p2
+            # Final fallback: search – slower but ensures we do not crash in
+            # rare edge cases where files are moved manually.
+            matches = list(base_dir.glob(f"**/{rel_path.split('/')[-1]}"))
+            if matches:
+                return matches[0]
+            raise FileNotFoundError(f"Image file not found for entry: {rel_path}")
+
+        self.paths = [_resolve(p) for p in df["img_filename"].tolist()]
         self.y = df["y"].astype(int).values
         self.group = df["place"].astype(int).values
         self.transform = transform
@@ -204,7 +231,7 @@ class CelebAHairDataset(Dataset):
         }
 
 # ---------------------------------------------------------------------
-# Transforms & DataLoaders
+# Transforms & DataLoaders (unchanged below)
 # ---------------------------------------------------------------------
 IMGNET_MEAN = (0.485, 0.456, 0.406)
 IMGNET_STD = (0.229, 0.224, 0.225)
@@ -264,3 +291,4 @@ def build_dataloaders(dataset_name: str, batch_size: int):
         test_set, batch_size=batch_size * 2, shuffle=False, num_workers=4, pin_memory=True
     )
     return train_loader, val_loader, test_loader
+```
