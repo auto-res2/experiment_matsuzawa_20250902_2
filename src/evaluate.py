@@ -64,10 +64,34 @@ def fake_mce() -> float:
     return 20.0 + random.Random(SEED).uniform(0, 15)
 
 
+def _parse_flops_string(flops_str: str) -> float:
+    """Convert ptflops MAC string (e.g. '4.13 GMac', '862.54 MMac') → GMac float."""
+    # ptflops returns strings like '4.13 GMac' or '862.54 MMac'.  We split on
+    # whitespace to obtain the numeric value and the unit suffix.
+    parts = flops_str.strip().split()
+    if not parts:
+        raise ValueError(f"Empty FLOPs string: '{flops_str}'")
+
+    value = float(parts[0])
+    unit = parts[1].lower() if len(parts) > 1 else "gmac"  # default unit = GMac
+
+    if unit.startswith("g"):
+        scale = 1.0           # already in GMac
+    elif unit.startswith("m"):
+        scale = 1e-3          # M → G
+    elif unit.startswith("k"):
+        scale = 1e-6          # K → G
+    else:
+        # Unexpected unit – assume the value is already in GMac to avoid crash
+        scale = 1.0
+    return value * scale
+
+
 def profile_model(model: nn.Module, batch_size: int = 1, reps: int = 20) -> Tuple[float, float]:
     """Return (latency_ms, flops_G).  Falls back to CPU timing if CUDA is absent."""
     dummy = torch.rand(batch_size, 3, 224, 224, device=device)
 
+    # ---------------- Latency ----------------
     if torch.cuda.is_available():
         starter, ender = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
         # warm-up
@@ -79,20 +103,24 @@ def profile_model(model: nn.Module, batch_size: int = 1, reps: int = 20) -> Tupl
             _ = model(dummy)
         ender.record()
         torch.cuda.synchronize()
-        latency = starter.elapsed_time(ender) / reps  # ms
+        latency = starter.elapsed_time(ender) / reps  # milliseconds
     else:
         # Simple CPU wall-clock timing
-        import time
         _ = model(dummy)  # warm-up
         start = time.perf_counter()
         for _ in range(reps):
             _ = model(dummy)
-        latency = (time.perf_counter() - start) * 1000 / reps  # ms
+        latency = (time.perf_counter() - start) * 1000 / reps
 
-    flops, _ = ptflops.get_model_complexity_info(model.cpu(), (3, 224, 224),
-                                                  verbose=False, print_per_layer_stat=False)
-    flops_G = float(flops.rstrip(' M')) / 1e3  # M → G
-    model.to(device)
+    # ---------------- FLOPs (MACs) ----------------
+    # ptflops only works on CPU models; we move the model there temporarily.
+    current_device = next(model.parameters()).device
+    model_cpu = model.cpu()
+    flops_str, _ = ptflops.get_model_complexity_info(model_cpu, (3, 224, 224),
+                                                     verbose=False, print_per_layer_stat=False)
+    flops_G = _parse_flops_string(flops_str)
+    # Restore original device so subsequent calls continue correctly.
+    model.to(current_device)
     return latency, flops_G
 
 # ----------------------------------------------------------------------------------
