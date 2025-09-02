@@ -6,5 +6,82 @@
     "Vision Mamba quantization techniques",
     "Vision Mamba pruning performance",
     "Vision Mamba low-memory inference"
+  ],
+  "research_study_list": [
+    {
+      "title": "Vision Mamba Mender"
+    },
+    {
+      "title": "VMamba: Visual State Space Model"
+    },
+    {
+      "title": "Vision Mamba: Efficient Visual Representation Learning with Bidirectional State Space Model"
+    },
+    {
+      "title": "Multi-Scale VMamba: Hierarchy in Hierarchy Visual State Space Model"
+    },
+    {
+      "title": "Meteor: Mamba-based Traversal of Rationale for Large Language and Vision Models"
+    },
+    {
+      "title": "Vision Mamba Mender"
+    },
+    {
+      "title": "VMamba: Visual State Space Model"
+    },
+    {
+      "title": "COMCAT: Towards Efficient Compression and Customization of Attention-Based Vision Models"
+    },
+    {
+      "title": "Multi-Scale VMamba: Hierarchy in Hierarchy Visual State Space Model"
+    },
+    {
+      "title": "Vision Mamba: Efficient Visual Representation Learning with Bidirectional State Space Model"
+    },
+    {
+      "title": "Vision Mamba Mender"
+    },
+    {
+      "title": "VMamba: Visual State Space Model"
+    },
+    {
+      "title": "Oscillation-free Quantization for Low-bit Vision Transformers"
+    },
+    {
+      "title": "Temporal Dynamic Quantization for Diffusion Models"
+    },
+    {
+      "title": "And the Bit Goes Down: Revisiting the Quantization of Neural Networks"
+    },
+    {
+      "title": "Vision Mamba Mender"
+    },
+    {
+      "title": "VMamba: Visual State Space Model"
+    },
+    {
+      "title": "Exploring Token Pruning in Vision State Space Models"
+    },
+    {
+      "title": "MambaTree: Tree Topology is All You Need in State Space Model"
+    },
+    {
+      "title": "QuadMamba: Learning Quadtree-based Selective Scan for Visual State Space Model"
+    },
+    {
+      "title": "VMamba: Visual State Space Model"
+    },
+    {
+      "title": "Vision Mamba Mender"
+    },
+    {
+      "title": "Vision Mamba: Efficient Visual Representation Learning with Bidirectional State Space Model"
+    },
+    {
+      "title": "Multi-Scale VMamba: Hierarchy in Hierarchy Visual State Space Model"
+    },
+    {
+      "title": "Memory-efficient Patch-based Inference for Tiny Deep Learning"
+    }
   ]
 }
