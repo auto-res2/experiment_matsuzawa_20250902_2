@@ -6,5 +6,82 @@
     "multi-scale diffusion optimization",
     "denoising diffusion speedup",
     "diffusion model resource efficiency"
+  ],
+  "research_study_list": [
+    {
+      "title": "Accelerating Guided Diffusion Sampling with Splitting Numerical Methods"
+    },
+    {
+      "title": "Simple Hierarchical Planning with Diffusion"
+    },
+    {
+      "title": "Faster Diffusion: Rethinking the Role of the Encoder for Diffusion Model Inference"
+    },
+    {
+      "title": "Wavelet Diffusion Models Are Fast and Scalable Image Generators"
+    },
+    {
+      "title": "Diffusion Sampling with Momentum for Mitigating Divergence Artifacts"
+    },
+    {
+      "title": "A Simple Early Exiting Framework for Accelerated Sampling in Diffusion Models"
+    },
+    {
+      "title": "Denoising Diffusion Samplers"
+    },
+    {
+      "title": "Multistep Distillation of Diffusion Models via Moment Matching"
+    },
+    {
+      "title": "Diffusion Posterior Sampling for Linear Inverse Problem Solving: A Filtering Perspective"
+    },
+    {
+      "title": "Reverse Transition Kernel: A Flexible Framework to Accelerate Diffusion Inference"
+    },
+    {
+      "title": "Learning multi-scale local conditional probability models of images"
+    },
+    {
+      "title": "Learning multi-scale local conditional probability models of images"
+    },
+    {
+      "title": "Generative Powers of Ten"
+    },
+    {
+      "title": "OMS-DPM: Optimizing the Model Schedule for Diffusion Probabilistic Models"
+    },
+    {
+      "title": "MultiDiffusion: Fusing Diffusion Paths for Controlled Image Generation"
+    },
+    {
+      "title": "Leveraging Early-Stage Robustness in Diffusion Models for Efficient and High-Quality Image Synthesis"
+    },
+    {
+      "title": "Training-Free Adaptive Diffusion with Bounded Difference Approximation Strategy"
+    },
+    {
+      "title": "A Simple Early Exiting Framework for Accelerated Sampling in Diffusion Models"
+    },
+    {
+      "title": "Faster Diffusion: Rethinking the Role of the Encoder for Diffusion Model Inference"
+    },
+    {
+      "title": "Multistep Distillation of Diffusion Models via Moment Matching"
+    },
+    {
+      "title": "Clockwork Diffusion: Efficient Generation With Model-Step Distillation"
+    },
+    {
+      "title": "SnapFusion: Text-to-Image Diffusion Model on Mobile Devices within Two Seconds"
+    },
+    {
+      "title": "A Simple Early Exiting Framework for Accelerated Sampling in Diffusion Models"
+    },
+    {
+      "title": "DiP-GO: A Diffusion Pruner via Few-step Gradient Optimization"
+    },
+    {
+      "title": "EfficientDM: Efficient Quantization-Aware Fine-Tuning of Low-Bit Diffusion Models"
+    }
   ]
 }
