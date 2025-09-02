@@ -71,7 +71,7 @@ def exp1() -> None:
     P[edge_index[0], edge_index[1]] = deg_inv[edge_index[0]]
 
     J = torch.eye(4) + gamma * torch.diag(theta) - eta * P
-    eig = torch.linalg.eigvals(J).real
+    eig = torch.linalg.eigvals(J).real.detach()  # detach so subsequent .numpy() calls work
     assert (eig <= 1 + gamma + 1e-4).all() and (eig >= 1 - eta - 1e-4).all(), "Spectrum bound violated"
 
     # T3: APSD monotonicity on 64-layer ER graph (200 nodes)
@@ -108,7 +108,7 @@ def exp1() -> None:
 
     # Figure – eigenvalue histogram
     plt.figure(figsize=(4, 3))
-    sns.histplot(eig.numpy(), bins=10, kde=False)
+    sns.histplot(eig.cpu().numpy(), bins=10, kde=False)
     plt.title("Eigenvalue spectrum (ring graph)")
     plt.xlabel("λ"); plt.ylabel("count")
     fname = os.path.join(FIG_DIR, "eigen_spectrum.pdf")

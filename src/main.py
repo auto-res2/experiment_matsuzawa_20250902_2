@@ -1,6 +1,6 @@
 """src/main.py
 Entry point – dispatches experiment selection to evaluation routines.
-Run via  python -m src.main --exp {1|2|3}
+(unchanged)
 """
 from __future__ import annotations
 import argparse
