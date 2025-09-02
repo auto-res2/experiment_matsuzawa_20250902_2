@@ -6,5 +6,82 @@
     "robust data augmentation",
     "adversarial training robustness",
     "domain randomization classifier"
+  ],
+  "research_study_list": [
+    {
+      "title": "MECTA: Memory-Economic Continual Test-Time Model Adaptation"
+    },
+    {
+      "title": "Generalized Jensen-Shannon Divergence Loss for Learning with Noisy Labels"
+    },
+    {
+      "title": "Modeling Inter-Class and Intra-Class Constraints in Novel Class Discovery"
+    },
+    {
+      "title": "Conjugated Semantic Pool Improves OOD Detection with Pre-trained Vision-Language Models"
+    },
+    {
+      "title": "Improving Zero-Shot Generalization and Robustness of Multi-Modal Models"
+    },
+    {
+      "title": "Improving robustness against common corruptions by covariate shift adaptation"
+    },
+    {
+      "title": "Improving robustness to corruptions with multiplicative weight perturbations"
+    },
+    {
+      "title": "Inverse Problems Leveraging Pre-trained Contrastive Representations"
+    },
+    {
+      "title": "On Interaction Between Augmentations and Corruptions in Natural Corruption Robustness"
+    },
+    {
+      "title": "Vector Quantization With Self-Attention for Quality-Independent Representation Learning"
+    },
+    {
+      "title": "Adversarial Auto-Augment with Label Preservation: A Representation Learning Principle Guided Approach"
+    },
+    {
+      "title": "Adversarial Auto-Augment with Label Preservation: A Representation Learning Principle Guided Approach"
+    },
+    {
+      "title": "AugMax: Adversarial Composition of Random Augmentations for Robust Training"
+    },
+    {
+      "title": "Data augmentation alone can improve adversarial training"
+    },
+    {
+      "title": "Data augmentation for deep learning based accelerated MRI reconstruction with limited data"
+    },
+    {
+      "title": "On Adversarial Training without Perturbing all Examples"
+    },
+    {
+      "title": "Phase Transition from Clean Training to Adversarial Training"
+    },
+    {
+      "title": "The Enemy of My Enemy Is My Friend: Exploring Inverse Adversaries for Improving Adversarial Training"
+    },
+    {
+      "title": "Robust Models are less Over-Confident"
+    },
+    {
+      "title": "Bag of Tricks for Adversarial Training"
+    },
+    {
+      "title": "Network Randomization: A Simple Technique for Generalization in Deep Reinforcement Learning"
+    },
+    {
+      "title": "In Search of Lost Domain Generalization"
+    },
+    {
+      "title": "Revisiting Domain Randomization via Relaxed State-Adversarial Policy Optimization"
+    },
+    {
+      "title": "Progressive Random Convolutions for Single Domain Generalization"
+    },
+    {
+      "title": "Domain Randomization via Entropy Maximization"
+    }
   ]
 }
