@@ -6,5 +6,82 @@
     "replay buffer compression",
     "episodic memory efficiency",
     "continual learning quantization"
+  ],
+  "research_study_list": [
+    {
+      "title": "Continual Learning in Low-rank Orthogonal Subspaces"
+    },
+    {
+      "title": "Contextual Transformation Networks for Online Continual Learning"
+    },
+    {
+      "title": "Improving Task-free Continual Learning by Distributionally Robust Memory Evolution"
+    },
+    {
+      "title": "Improving Task-free Continual Learning by Distributionally Robust Memory Evolution"
+    },
+    {
+      "title": "SparCL: Sparse Continual Learning on the Edge"
+    },
+    {
+      "title": "Contextual Transformation Networks for Online Continual Learning"
+    },
+    {
+      "title": "Navigating Memory Construction by Global Pseudo-Task Simulation for Continual Learning"
+    },
+    {
+      "title": "MECTA: Memory-Economic Continual Test-Time Model Adaptation"
+    },
+    {
+      "title": "Look-ahead Meta Learning for Continual Learning"
+    },
+    {
+      "title": "Look-ahead Meta Learning for Continual Learning"
+    },
+    {
+      "title": "Analysis of Stochastic Processes through Replay Buffers"
+    },
+    {
+      "title": "Analysis of Stochastic Processes through Replay Buffers"
+    },
+    {
+      "title": "Large Batch Experience Replay"
+    },
+    {
+      "title": "Large Batch Experience Replay"
+    },
+    {
+      "title": "Improving Computational Efficiency in Visual Reinforcement Learning via Stored Embeddings"
+    },
+    {
+      "title": "Spatially-Aware Transformers for Embodied Agents"
+    },
+    {
+      "title": "Kanerva++: Extending the Kanerva Machine With Differentiable, Locally Block Allocated Latent Memory"
+    },
+    {
+      "title": "General Sequential Episodic Memory Model"
+    },
+    {
+      "title": "Predicting Event Memorability from Contextual Visual Semantics"
+    },
+    {
+      "title": "Model-Based Episodic Memory Induces Dynamic Hybrid Controls"
+    },
+    {
+      "title": "Online Learned Continual Compression with Adaptive Quantization Modules"
+    },
+    {
+      "title": "Vector Quantization Prompting for Continual Learning"
+    },
+    {
+      "title": "Mitigating Forgetting in Online Continual Learning with  Neuron Calibration"
+    },
+    {
+      "title": "Uncertainty-guided Continual Learning with Bayesian Neural Networks"
+    },
+    {
+      "title": "Lifelong Domain Adaptation via Consolidated Internal Distribution"
+    }
   ]
 }
