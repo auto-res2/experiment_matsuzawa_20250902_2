@@ -1,0 +1,24 @@
+Downloading https://github.com/kimiyoung/planetoid/raw/master/data/ind.cora.x
+Downloading https://github.com/kimiyoung/planetoid/raw/master/data/ind.cora.tx
+Downloading https://github.com/kimiyoung/planetoid/raw/master/data/ind.cora.allx
+Downloading https://github.com/kimiyoung/planetoid/raw/master/data/ind.cora.y
+Downloading https://github.com/kimiyoung/planetoid/raw/master/data/ind.cora.ty
+Downloading https://github.com/kimiyoung/planetoid/raw/master/data/ind.cora.ally
+Downloading https://github.com/kimiyoung/planetoid/raw/master/data/ind.cora.graph
+Downloading https://github.com/kimiyoung/planetoid/raw/master/data/ind.cora.test.index
+Processing...
+Done!
+Downloading https://raw.githubusercontent.com/graphdml-uiuc-jlu/geom-gcn/f1fc0d14b3b019c562737240d06ec83b07d16a8f/new_data/chameleon/out1_node_feature_label.txt
+Downloading https://raw.githubusercontent.com/graphdml-uiuc-jlu/geom-gcn/f1fc0d14b3b019c562737240d06ec83b07d16a8f/new_data/chameleon/out1_graph_edges.txt
+Downloading https://raw.githubusercontent.com/graphdml-uiuc-jlu/geom-gcn/f1fc0d14b3b019c562737240d06ec83b07d16a8f/splits/chameleon_split_0.6_0.2_0.npz
+Downloading https://raw.githubusercontent.com/graphdml-uiuc-jlu/geom-gcn/f1fc0d14b3b019c562737240d06ec83b07d16a8f/splits/chameleon_split_0.6_0.2_1.npz
+Downloading https://raw.githubusercontent.com/graphdml-uiuc-jlu/geom-gcn/f1fc0d14b3b019c562737240d06ec83b07d16a8f/splits/chameleon_split_0.6_0.2_2.npz
+Downloading https://raw.githubusercontent.com/graphdml-uiuc-jlu/geom-gcn/f1fc0d14b3b019c562737240d06ec83b07d16a8f/splits/chameleon_split_0.6_0.2_3.npz
+Downloading https://raw.githubusercontent.com/graphdml-uiuc-jlu/geom-gcn/f1fc0d14b3b019c562737240d06ec83b07d16a8f/splits/chameleon_split_0.6_0.2_4.npz
+Downloading https://raw.githubusercontent.com/graphdml-uiuc-jlu/geom-gcn/f1fc0d14b3b019c562737240d06ec83b07d16a8f/splits/chameleon_split_0.6_0.2_5.npz
+Downloading https://raw.githubusercontent.com/graphdml-uiuc-jlu/geom-gcn/f1fc0d14b3b019c562737240d06ec83b07d16a8f/splits/chameleon_split_0.6_0.2_6.npz
+Downloading https://raw.githubusercontent.com/graphdml-uiuc-jlu/geom-gcn/f1fc0d14b3b019c562737240d06ec83b07d16a8f/splits/chameleon_split_0.6_0.2_7.npz
+Downloading https://raw.githubusercontent.com/graphdml-uiuc-jlu/geom-gcn/f1fc0d14b3b019c562737240d06ec83b07d16a8f/splits/chameleon_split_0.6_0.2_8.npz
+Downloading https://raw.githubusercontent.com/graphdml-uiuc-jlu/geom-gcn/f1fc0d14b3b019c562737240d06ec83b07d16a8f/splits/chameleon_split_0.6_0.2_9.npz
+Processing...
+Done!
