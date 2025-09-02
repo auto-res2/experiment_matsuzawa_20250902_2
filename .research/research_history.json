@@ -401,5 +401,67 @@
     {
       "title": "Fine-Grained Image-Text Matching by Cross-Modal Hard Aligning Network"
     }
+  ],
+  "reference_research_study_list": [
+    {
+      "title": "Bottom-up and top-down attention for image captioning and visual question answering"
+    },
+    {
+      "title": "How attentive are graph attention networks?"
+    },
+    {
+      "title": "Attend-and-excite: Attention-based semantic guidance for text-to-image diffusion models"
+    },
+    {
+      "title": "Learning the best pooling strategy for visual semantic embedding"
+    },
+    {
+      "title": "Uniter: Universal image-text representation learning"
+    },
+    {
+      "title": "Probabilistic embeddings for cross-modal retrieval"
+    },
+    {
+      "title": "Empirical evaluation of gated recurrent neural networks on sequence modeling"
+    },
+    {
+      "title": "Bert: Pre-training of deep bidirectional transformers for language understanding"
+    },
+    {
+      "title": "Similarity reasoning and filtration for image-text matching"
+    },
+    {
+      "title": "Vse++: Improving visual-semantic embeddings with hard negatives"
+    },
+    {
+      "title": "Devise: A deep visual-semantic embedding model"
+    },
+    {
+      "title": "Learning semantic relationship among instances for image-text matching"
+    },
+    {
+      "title": "Deep residual learning for image recognition"
+    },
+    {
+      "title": "A structural probe for finding syntax in word representations"
+    },
+    {
+      "title": "Long short-term memory"
+    },
+    {
+      "title": "spaCy: Industrial-strength Natural Language Processing in Python"
+    },
+    {
+      "title": "Unicoder: A universal language encoder by pre-training with multiple cross-lingual tasks"
+    },
+    {
+      "title": "Simpson: Simplifying photo cleanup with single-click distracting object segmentation network"
+    },
+    {
+      "title": "Maggie: Masked guided gradual human instance matting"
+    },
+    {
+      "title": "Improving cross-modal retrieval with set of diverse embeddings"
+    }
   ]
 }
