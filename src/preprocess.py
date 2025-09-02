@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Tuple
 
 import torch
-from torch_geometric.datasets import Planetoid, WebKB
+from torch_geometric.datasets import Planetoid, WebKB, WikipediaNetwork
 from torch_geometric.utils import add_self_loops
 
 # -----------------------------------------------------------------------------
@@ -39,6 +39,22 @@ def set_seed(seed: int):
 #  Dataset loader (quick-mode subset)
 # -----------------------------------------------------------------------------
 
+def _load_planetoid(name: str):
+    ds = Planetoid(str(DATA_DIR), name.capitalize())
+    return ds[0]
+
+
+def _load_webkb(name: str):
+    ds = WebKB(str(DATA_DIR), name.capitalize())
+    return ds[0]
+
+
+def _load_wikipedia(name: str):
+    # WikipediaNetwork supports lowercase names ("chameleon", "squirrel", "crocodile")
+    ds = WikipediaNetwork(str(DATA_DIR), name.lower(), geom_gcn_preprocess=True)
+    return ds[0]
+
+
 def load_dataset(name: str):
     """Return a PyG data object pinned to the GPU.
 
@@ -47,11 +63,11 @@ def load_dataset(name: str):
     name = name.lower()
     try:
         if name in {"cora", "citeseer", "pubmed"}:
-            ds = Planetoid(str(DATA_DIR), name.capitalize())
-            data = ds[0].to(DEVICE)
+            data = _load_planetoid(name)
         elif name in {"cornell", "texas", "wisconsin"}:
-            ds = WebKB(str(DATA_DIR), name.capitalize())
-            data = ds[0].to(DEVICE)
+            data = _load_webkb(name)
+        elif name in {"chameleon", "squirrel", "crocodile"}:
+            data = _load_wikipedia(name)
         else:
             raise ValueError(f"Dataset {name} not supported in quick mode.")
     except Exception as e:
@@ -59,4 +75,4 @@ def load_dataset(name: str):
 
     # Ensure self-loops are present (PairNorm not used here, so always add)
     data.edge_index, _ = add_self_loops(data.edge_index, num_nodes=data.num_nodes)
-    return data
+    return data.to(DEVICE)
