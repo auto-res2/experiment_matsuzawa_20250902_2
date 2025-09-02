@@ -66,6 +66,8 @@ class ACuDiNLayer(nn.Module):
             self.act = nn.PReLU()
         # +2 stats: degree & feature variance
         self.alpha_mlp = NodeMLP(out_dim if final else in_dim + 2)
+        # When feature dimensions differ we need a projection for the residual/teleport path
+        self.skip_proj = nn.Identity() if in_dim == out_dim else nn.Linear(in_dim, out_dim, bias=False)
 
     # ---------------------------------------------------------------------
     @staticmethod
@@ -93,7 +95,9 @@ class ACuDiNLayer(nn.Module):
         feat_var = (x.var(dim=-1, unbiased=False, keepdim=True) + 1e-6)
         node_feat = torch.cat([x, deg.unsqueeze(-1), feat_var], dim=-1)
         alpha = self.alpha_mlp(node_feat).unsqueeze(-1)  # (N,1)
-        out = (1 - alpha) * out + alpha * x
+        # Project x to match out_dim when necessary for the skip/teleport connection
+        x_proj = self.skip_proj(x)
+        out = (1 - alpha) * out + alpha * x_proj
         out = self.bn(out)
         return self.act(out)
 
