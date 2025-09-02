@@ -1,168 +1,82 @@
-"""src/main.py
-Entry-point.  Run with:  python -m src.main
+"""
+main.py – top-level orchestration script (entry-point: `python -m src.main`)
+The logic is a cleaned-up copy of the MASTER RUNNER section from the original
+monolithic experiment file.  All heavy lifting is delegated to `train.run_single`.
 """
 from __future__ import annotations
-
-import importlib
-import subprocess
-import sys
-import time
-import json
-from types import SimpleNamespace
+import time, math, json
 from pathlib import Path
-import textwrap
+import numpy as np
 
-# ---------------------------------------------------------------------
-# Early: ensure heavy dependencies are installed *before* other sub-modules
-# ---------------------------------------------------------------------
-REQUIRED_PIPS = [
-    "torch",
-    "torchvision",
-    "torchaudio",
-    "timm>=0.9.2",
-    "diffusers>=0.19.0",
-    "transformers>=4.33.0",
-    "scikit-learn",
-    "fvcore",
-    "open_clip_torch",
-    "pandas",
-    "seaborn",
-    "matplotlib",
-    "tqdm",
-    "requests",
-    "numpy",
-    "pillow",
+from src.train import run_single
+from src.metrics import paired_t_test
+from src.viz import save_results_table
+
+ROOT = Path(__file__).resolve().parent.parent
+FIG_DIR = ROOT / "figs"
+FIG_DIR.mkdir(parents=True, exist_ok=True)
+
+# ---------------------------------------------------------------------------
+#                      EXPERIMENT CONFIGURATION
+# ---------------------------------------------------------------------------
+EXP_LIST = [
+    "exp1_waterbirds",   # Waterbirds-95, 100 epochs
+    "exp1_celeba",       # CelebA Hair,  80 epochs
+    "exp2_cars",         # Diff-Shift-Cars, 60 epochs
+    "exp3_ninco",        # ImageNet-mini → NINCO/CIFAR-C, 30 epochs
 ]
 
-def _ensure_pkg(pkg: str):
-    name = pkg.split("==")[0].split(">=")[0].split("<=")[0]
-    try:
-        importlib.import_module(name)
-    except ImportError:
-        print(f"Installing missing package: {pkg}")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
+DEFAULT_SEEDS = {
+    "exp1_waterbirds": [0, 1, 2, 3, 4],
+    "exp1_celeba"    : [0, 1, 2, 3, 4],
+    "exp2_cars"      : [1, 2, 3, 4, 5],
+    "exp3_ninco"     : [0, 1, 2],
+}
 
-for _p in REQUIRED_PIPS:
-    _ensure_pkg(_p)
+# ---------------------------------------------------------------------------
+#                           MASTER RUNNER
+# ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------
-# Now safe to import internal modules that rely on those packages
-# ---------------------------------------------------------------------
-import torch
-from torch.cuda.amp import GradScaler
-
-from . import preprocess as prep
-from .train import (
-    build_backbone,
-    CCLiDAR,
-    train_one_epoch,
-)
-from .evaluate import evaluate, plot_training_curves
-
-# ---------------------------------------------------------------------
-# Paths
-# ---------------------------------------------------------------------
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-CKPT_ROOT = PROJECT_ROOT / "checkpoints"
-FIG_ROOT = PROJECT_ROOT / "figs"
-CKPT_ROOT.mkdir(parents=True, exist_ok=True)
-FIG_ROOT.mkdir(parents=True, exist_ok=True)
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-# ---------------------------------------------------------------------
-#  Experiment 1: Waterbirds demo
-# ---------------------------------------------------------------------
-
-def run_experiment1():
-    print("\n=====================  Experiment 1  =====================")
-    print(
-        textwrap.dedent(
-            """
-        Zero-Annotation Worst-Group Robustness on Waterbirds & CelebA
-        Goal: show that CC-LiDAR boosts worst-group accuracy without hurting ID accuracy.
-        Backbone: ResNet-50 initialised with DINO weights.
-        Baselines: ERM vs CC-LiDAR (full).
-        """
+def run_all():
+    results = {}
+    for exp in EXP_LIST:
+        methods = (
+            ["erm", "irm", "fishr", "fourier", "autoacer", "cclidar", "groupdro_oracle"]
+            if exp.startswith("exp1") else (
+                ["erm", "cad_gan", "autoacer", "cclidar"] if exp.startswith("exp2") else
+                ["erm", "no_ace", "no_gcdro", "no_hff", "cclidar"]
+            )
         )
-    )
 
-    cfg = SimpleNamespace(
-        epochs=3,  # use 3 epochs for quick demo
-        batch_size=32,
-        lr=3e-4,
-        fp16=True,
-        latent_h=224,
-        latent_w=224,
-        lambda_ce=1.0,
-        lambda_hff=0.05,
-        tau=0.7,
-        strong_aug=prep.strong_aug,
-    )
+        for m in methods:
+            res_per_seed = []
+            for s in DEFAULT_SEEDS[exp]:
+                res_per_seed.append(run_single(s, exp, m))
 
-    # --------------------- Data ---------------------
-    train_loader, val_loader, test_loader = prep.build_dataloaders("waterbirds", cfg.batch_size)
+            # aggregate mean ± se
+            res_arr = np.array(res_per_seed)
+            mean, se = res_arr.mean(0), res_arr.std(0) / math.sqrt(len(res_arr))
+            p = paired_t_test(res_arr, baseline="erm") if m != "erm" else None
+            results.setdefault(exp, {})[m] = dict(mean=mean.tolist(), se=se.tolist(), p=p)
 
-    # --------------------- Model & optimiser ---------------------
-    backbone = build_backbone(num_classes=2)
-    model = CCLiDAR(backbone, cfg).to(device)
+        # after each dataset create result table + PDF
+        save_results_table(results[exp], FIG_DIR / f"results_{exp}.pdf")
 
-    opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=1e-4)
-    scaler = GradScaler(enabled=cfg.fp16)
+    # ----------- dump master CSV -------------
+    with open(ROOT / "results_master.csv", "w") as f:
+        json.dump(results, f, indent=2)
+    print("All experiments done.  Master results written → results_master.csv")
 
-    best_val_acc = 0.0
-    best_state = None
-    history = {"train_loss": [], "val_acc": [], "val_wg": []}
 
-    for epoch in range(cfg.epochs):
-        print(f"Epoch [{epoch+1}/{cfg.epochs}]")
-        tloss = train_one_epoch(model, train_loader, opt, scaler, cfg)
-        acc_val, wg_val = evaluate(model, val_loader)
-        print(f"Val   acc={acc_val:.2f}  worst-group={wg_val:.2f}  train-loss={tloss:.3f}")
-
-        history["train_loss"].append(tloss)
-        history["val_acc"].append(acc_val)
-        history["val_wg"].append(wg_val)
-
-        if acc_val > best_val_acc:
-            best_val_acc = acc_val
-            best_state = {k: v.cpu() for k, v in model.state_dict().items()}
-
-    if best_state is None:
-        raise RuntimeError("Training failed to improve.")
-
-    ckpt_path = CKPT_ROOT / "exp1_best_cc_lidar.pt"
-    torch.save(best_state, ckpt_path)
-    print(f"Saved best checkpoint to {ckpt_path.relative_to(PROJECT_ROOT)}")
-
-    # --------------------- Test ---------------------
-    model.load_state_dict(best_state)
-    test_acc, test_wg = evaluate(model, test_loader)
-    print(f"TEST  acc={test_acc:.2f}  worst-group={test_wg:.2f}")
-
-    # --------------------- Figures ---------------------
-    fig_path = FIG_ROOT / "training_curves_exp1.pdf"
-    plot_training_curves(history, fig_path)
-    print(f"Saved figure: {fig_path.relative_to(PROJECT_ROOT)}")
-
-    # --------------------- Numeric JSON ---------------------
-    print("\nExperiment 1 results")
-    print(
-        json.dumps(
-            {
-                "val_best_acc": best_val_acc,
-                "test_acc": test_acc,
-                "test_worst_group_acc": test_wg,
-            },
-            indent=2,
-        )
-    )
-
-# ---------------------------------------------------------------------
-# main
-# ---------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+#                               ENTRY-POINT
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     start = time.time()
-    run_experiment1()
-    end = time.time()
-    print(f"Total run-time: {(end - start) / 60:.1f} min")
+    print("\n====================  CC-LiDAR CONSISTENCY SUITE  ====================")
+    print(
+        "This run executes all experiments exactly as specified (epochs, seeds, baselines).\n"
+        "Expected wall-clock ≤ 3×24 h on a single T4.  Abort via CTRL-C to resume later."
+    )
+    run_all()
+    print(f"Total pipeline time: {(time.time() - start) / 3600:.2f} h")
