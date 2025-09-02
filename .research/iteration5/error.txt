@@ -1,0 +1,13 @@
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/main.py", line 20, in <module>
+    main()
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/main.py", line 14, in main
+    exp1_run()
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/evaluate.py", line 60, in exp1_run
+    base_model = load_model(arch, "vanilla", seed=11)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/train.py", line 137, in load_model
+    raise FileNotFoundError(f"Checkpoint {ckpt_path} not found – did you download weights?")
+FileNotFoundError: Checkpoint weights/resnet50_vanilla_s11.pt not found – did you download weights?
