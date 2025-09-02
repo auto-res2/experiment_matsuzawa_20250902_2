@@ -6,5 +6,82 @@
     "multi-scale diffusion acceleration",
     "diffusion model optimization",
     "hierarchical denoising speedup"
+  ],
+  "research_study_list": [
+    {
+      "title": "Simple Hierarchical Planning with Diffusion"
+    },
+    {
+      "title": "Hyperbolic Diffusion Embedding and Distance for Hierarchical Representation Learning"
+    },
+    {
+      "title": "Hierarchical Integration Diffusion Model for Realistic Image Deblurring"
+    },
+    {
+      "title": "Coarse-to-Fine: a Hierarchical Diffusion Model for Molecule Generation in 3D"
+    },
+    {
+      "title": "Faster Local Solvers for Graph Diffusion Equations"
+    },
+    {
+      "title": "A Simple Early Exiting Framework for Accelerated Sampling in Diffusion Models"
+    },
+    {
+      "title": "Denoising Diffusion Samplers"
+    },
+    {
+      "title": "Multistep Distillation of Diffusion Models via Moment Matching"
+    },
+    {
+      "title": "Diffusion Posterior Sampling for Linear Inverse Problem Solving: A Filtering Perspective"
+    },
+    {
+      "title": "Reverse Transition Kernel: A Flexible Framework to Accelerate Diffusion Inference"
+    },
+    {
+      "title": "Improving Training Efficiency of Diffusion Models via Multi-Stage Framework and Tailored Multi-Decoder Architecture"
+    },
+    {
+      "title": "Faster Diffusion: Rethinking the Role of the Encoder for Diffusion Model Inference"
+    },
+    {
+      "title": "Multistep Distillation of Diffusion Models via Moment Matching"
+    },
+    {
+      "title": "A Simple Early Exiting Framework for Accelerated Sampling in Diffusion Models"
+    },
+    {
+      "title": "OMS-DPM: Optimizing the Model Schedule for Diffusion Probabilistic Models"
+    },
+    {
+      "title": "Gradient Guidance for Diffusion Models: An Optimization Perspective"
+    },
+    {
+      "title": "An Expectation-Maximization Algorithm for Training Clean Diffusion Models from Corrupted Observations"
+    },
+    {
+      "title": "Analyzing and Improving the Training Dynamics of Diffusion Models"
+    },
+    {
+      "title": "Analyzing and Improving the Training Dynamics of Diffusion Models"
+    },
+    {
+      "title": "Understanding Diffusion Objectives as the ELBO with Simple Data Augmentation"
+    },
+    {
+      "title": "Training-Free Adaptive Diffusion with Bounded Difference Approximation Strategy"
+    },
+    {
+      "title": "On the Posterior Distribution in Denoising: Application to Uncertainty Quantification"
+    },
+    {
+      "title": "Leveraging Early-Stage Robustness in Diffusion Models for Efficient and High-Quality Image Synthesis"
+    },
+    {
+      "title": "Efficient Hierarchical Entropy Model for Learned Point Cloud Compression"
+    },
+    {
+      "title": "Faster Diffusion: Rethinking the Role of the Encoder for Diffusion Model Inference"
+    }
   ]
 }
