@@ -36,7 +36,8 @@ class ADRConv(nn.Module):
 
     Updated (v2):
     H_{l+1} = LN\big[(I + γ Θ) H_l  −  η P H_l\big]
-    where  Θ  is a node-wise anti-diffusion gate, and  P=D^{-1}A  is the
+    where  Θ  is a node-wise anti-diffusion gate constrained to the interval
+    [0,1] (implemented via a sigmoid activation),  and  P=D^{-1}A  is the
     row-normalised adjacency (diffusion operator).  Note the **minus** sign in
     front of the diffusion term – this corrects a sign error present in the
     original implementation and ensures that the spectrum of the linearised
@@ -51,9 +52,9 @@ class ADRConv(nn.Module):
         # forward pass to keep them in the valid range.
         self.eta = nn.Parameter(torch.tensor(float(eta_init)))
         self.gamma = nn.Parameter(torch.tensor(float(gamma_init)))
-        # Gate network – 2-layer MLP → tanh → scalar per node
+        # Gate network – 2-layer MLP → sigmoid → scalar in [0,1] per node
         self.theta_net = nn.Sequential(
-            nn.Linear(dim * 2 + 1, 32), nn.GELU(), nn.Linear(32, 1), nn.Tanh()
+            nn.Linear(dim * 2 + 1, 32), nn.GELU(), nn.Linear(32, 1), nn.Sigmoid()
         )
         self.ln = nn.LayerNorm(dim)
 
@@ -78,7 +79,7 @@ class ADRConv(nn.Module):
         msg = deg_inv[row].unsqueeze(1) * h[col]
         diff = torch.zeros_like(h).scatter_add_(0, row.unsqueeze(1).expand_as(msg), msg)
 
-        # (3) anti-diffusion gate   Θ_i = tanh( f( x_i^0, h_i , log deg_i ) )
+        # (3) anti-diffusion gate   Θ_i ∈ [0,1]
         deg_log = (deg_inv + 1e-8).log().unsqueeze(1)  # numeric stability
         gate_in = torch.cat([h0_raw, h.detach(), deg_log], dim=1)
         theta = self.theta_net(gate_in).squeeze()  # shape (N,)
