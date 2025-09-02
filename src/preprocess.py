@@ -1,5 +1,8 @@
 """src/preprocess.py
 Data loading, random-seed control and directory set-up.
+Fixed: WikipediaNetwork provides boolean masks with shape (N, #splits).
+We now collapse those masks to the first split so that downstream code
+(which expects 1-D boolean vectors) works unchanged.
 """
 from __future__ import annotations
 
@@ -50,14 +53,35 @@ def _load_webkb(name: str):
 
 
 def _load_wikipedia(name: str):
-    # WikipediaNetwork supports lowercase names ("chameleon", "squirrel", "crocodile")
+    # WikipediaNetwork supports lowercase names
     ds = WikipediaNetwork(str(DATA_DIR), name.lower(), geom_gcn_preprocess=True)
     return ds[0]
 
 
+# -----------------------------------------------------------------------------
+#  Mask sanitiser – collapses 2-D boolean masks to 1-D (first split)
+# -----------------------------------------------------------------------------
+
+def _ensure_1d_masks(data):
+    """Many heterophilous datasets ship with 10 different train/val/test splits
+    stored as boolean matrices of shape (N, 10).  The rest of the pipeline
+    expects 1-D masks.  We therefore squeeze to the first split if needed."""
+
+    for attr in ["train_mask", "val_mask", "test_mask"]:
+        if hasattr(data, attr):
+            m = getattr(data, attr)
+            # We assume masks are boolean or uint8.  If 2-D, take first column.
+            if m.dim() == 2:
+                setattr(data, attr, m[:, 0])
+    return data
+
+
+# -----------------------------------------------------------------------------
+#  Public loader
+# -----------------------------------------------------------------------------
+
 def load_dataset(name: str):
     """Return a PyG data object pinned to the GPU.
-
     Only the datasets required by the quick sanity check are implemented here.
     """
     name = name.lower()
@@ -72,6 +96,9 @@ def load_dataset(name: str):
             raise ValueError(f"Dataset {name} not supported in quick mode.")
     except Exception as e:
         raise RuntimeError(f"Failed to load dataset {name}: {e}") from e
+
+    # Ensure masks are 1-D (first split)
+    data = _ensure_1d_masks(data)
 
     # Ensure self-loops are present (PairNorm not used here, so always add)
     data.edge_index, _ = add_self_loops(data.edge_index, num_nodes=data.num_nodes)
