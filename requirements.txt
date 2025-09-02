@@ -5,13 +5,13 @@
 #     CUDA 11.8 / CPU wheels for all torch-* extensions.  Staying on 2.3.0
 #     forced pip to compile the auxiliary packages from source, which failed
 #     because their build‐time isolation environment did not provide Torch.
-# 2.  torch_scatter 2.1.4 ships matching wheels for torch 2.2.*, so a source
+# 2.  torch_scatter 2.1.2 ships matching wheels for torch 2.2.*, so a source
 #     build (and the associated missing-torch error) is avoided.
 # ----------------------------------------------------------------------------
 
 torch==2.2.1              # stable, wheels for cp311/cu118 & cpu
 torch_geometric==2.5.0    # fully compatible with torch 2.2
-torch_scatter==2.1.4      # wheels available for torch 2.2
+torch_scatter==2.1.2      # wheels available for torch 2.2
 
 # Scientific Python stack
 numpy
