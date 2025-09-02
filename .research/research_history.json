@@ -1,0 +1,10 @@
+{
+  "research_topic": "画像分類器 × 頑健性（ImageNet-CのmCE）を改善したい",
+  "queries": [
+    "ImageNet-C mCE improvement",
+    "corruption robustness training",
+    "robust data augmentation",
+    "adversarial training robustness",
+    "domain randomization classifier"
+  ]
+}
