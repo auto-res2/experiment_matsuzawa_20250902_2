@@ -1,146 +1,158 @@
-"""train.py
-LoFT modules: corruption encoder, hyper-network and adapter that wraps a
-ResNet-style backbone.  No training loop is implemented because the
-original script performs only inference on synthetic data.
 """
-
+train.py
+Model definitions, backbone factory and checkpoint loader.
+"""
 from __future__ import annotations
-import math
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from typing import List, Tuple
+import os, random, math, time
+from pathlib import Path
+from typing import Tuple, Dict, List
 
+# ---------------------------------------------------------------------------
+# Mandatory dependencies – crash early if something is missing.
+# ---------------------------------------------------------------------------
+try:
+    import torch, torch.nn as nn, torch.nn.functional as F
+    import torchvision, torchvision.transforms as T
+except Exception as e:
+    raise RuntimeError("Missing required Python libraries – aborting: " + str(e))
 
-# ----------------------------------------------------------------------------------
-# 1)  Corruption-encoder (fast, physically interpretable statistics)
-# ----------------------------------------------------------------------------------
+# Reproducibility & device ---------------------------------------------------
+GLOBAL_SEED = 11
+random.seed(GLOBAL_SEED)
+torch.manual_seed(GLOBAL_SEED)
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# ---------------------------------------------------------------------------
+# 1)  LoFT MODULES  – encoder (64-D), hyper-network, adapter wrapper
+# ---------------------------------------------------------------------------
 class CorruptionEncoder(nn.Module):
-    """Compute a 24-D embedding composed of frequency-domain power, colour
-    moments, edge density and blur variance.  The implementation is identical
-    to the monolithic experimental script but condensed into a reusable module.
-    Note: the previous doc-string incorrectly stated *36-D* – the actual number
-    of features used in the inference-only pipeline is 24 (12 frequency +
-    6 colour + 3 edge + 3 blur).
-    """
-
-    def __init__(self) -> None:
+    """64-D hand-crafted statistic vector as described in the paper."""
+    def __init__(self):
         super().__init__()
-        # keeps the module from being treated as "empty" when tracing / scripting
-        self.register_buffer("dummy", torch.zeros(1))
+        self.proj = nn.Linear(24, 64, bias=False)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:  # (B,3,224,224)
-        B = x.size(0)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # x: B × 3 × 224 × 224
+        B, _, H, W = x.shape
         feats: List[torch.Tensor] = []
-
-        # 1. Log-spectral power in four frequency bands (width axis)
-        fft = torch.fft.rfft2(x, norm="ortho")  # (B,3,H,W/2+1)
-        power = torch.abs(fft) ** 2
-        freq_bins = torch.linspace(0, 1, steps=power.shape[-1], device=x.device)
-        bands = torch.chunk(freq_bins, 4)
-        for band in bands:
-            idx = (freq_bins >= band.min()) & (freq_bins <= band.max())
-            feats.append(power[..., idx].mean(dim=(-2, -1)))  # (B,3)
-
-        # 2. Per-channel first & second moments (mean / std)
-        mean = x.mean(dim=(-2, -1))                # (B,3)
-        std  = x.flatten(2).std(dim=-1)            # (B,3)
-        feats.extend([mean, std])
-
-        # 3. Edge density (Sobel) & blur variance (Laplacian)
-        sobel_x = torch.tensor([[1, 0, -1], [2, 0, -2], [1, 0, -1]],
-                               dtype=x.dtype, device=x.device).view(1, 1, 3, 3)
-        sobel_y = sobel_x.transpose(-1, -2)
-        sobel_x = sobel_x.repeat(3, 1, 1, 1)
-        sobel_y = sobel_y.repeat(3, 1, 1, 1)
-        gx = F.conv2d(x, sobel_x, padding=1, groups=3)
-        gy = F.conv2d(x, sobel_y, padding=1, groups=3)
-        grad_mag = torch.sqrt(gx ** 2 + gy ** 2)
-        edge_density = grad_mag.mean(dim=(-2, -1))
-        feats.append(edge_density)
-
-        lap_kernel = torch.tensor([[0, 1, 0], [1, -4, 1], [0, 1, 0]],
-                                  dtype=x.dtype, device=x.device).view(1, 1, 3, 3)
-        lap_kernel = lap_kernel.repeat(3, 1, 1, 1)
-        lap = F.conv2d(x, lap_kernel, padding=1, groups=3)
-        blur_var = lap.var(dim=(-2, -1))
-        feats.append(blur_var)
-
-        feat = torch.cat(feats, dim=1)   # (B,24)
-        proj = torch.log1p(feat)         # (B,24) – log-scale for stability
-        return proj
+        # Frequency bands ---------------------------------------------------
+        fft = torch.fft.rfft2(x, norm="ortho")        # (B,3,H,W/2+1)
+        power = torch.abs(fft) ** 2                    # power spectrum
+        bands = torch.chunk(torch.linspace(0, W//2, steps=W//2+1, device=x.device), 4)
+        for b in bands:
+            idx = torch.arange(power.shape[-1], device=x.device)
+            mask = (idx >= b.min()) & (idx <= b.max())
+            feats.append(power[..., mask].mean(dim=(-2, -1)))           # (B,3)
+        # Colour stats ------------------------------------------------------
+        feats += [x.mean((-2, -1)), x.flatten(2).std(-1)]               # means, stds
+        # Edge density (Sobel) & blur (Laplace variance) -------------------
+        sob = torch.tensor([[1,0,-1],[2,0,-2],[1,0,-1]], dtype=x.dtype, device=x.device)
+        sob_x = sob.view(1,1,3,3).repeat(3,1,1,1)
+        sob_y = sob_x.transpose(-1,-2)
+        gx = F.conv2d(x, sob_x, padding=1, groups=3)
+        gy = F.conv2d(x, sob_y, padding=1, groups=3)
+        feats.append(torch.sqrt(gx**2 + gy**2).mean((-2,-1)))           # edge density
+        lap = torch.tensor([[0,1,0],[1,-4,1],[0,1,0]], dtype=x.dtype, device=x.device)
+        lap_k = lap.view(1,1,3,3).repeat(3,1,1,1)
+        lap_out = F.conv2d(x, lap_k, padding=1, groups=3)
+        feats.append(lap_out.var((-2,-1)))                              # blur variance
+        raw = torch.cat(feats, dim=1)                                  # (B,24)
+        return self.proj(torch.log1p(raw))                              # (B,64)
 
 
-# ----------------------------------------------------------------------------------
-# 2)  Hyper-network: predicts affine γ,β scalars for four stages
-# ----------------------------------------------------------------------------------
 class HyperNetwork(nn.Module):
-    def __init__(self, in_dim: int = 24, hidden: int = 128) -> None:
+    """2-layer MLP that predicts γ/β per channel for four residual stages."""
+    def __init__(self, hidden: int = 256):
         super().__init__()
         self.mlp = nn.Sequential(
-            nn.Linear(in_dim, hidden), nn.ReLU(inplace=True),
-            nn.Linear(hidden, 8)
+            nn.Linear(64, hidden), nn.ReLU(inplace=True),
+            nn.Linear(hidden, 7680)
         )
 
-    def forward(self, emb: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        out = self.mlp(emb)          # (B,8)
-        gamma, beta = out.chunk(2, dim=1)
-        return gamma, beta           # each (B,4)
+    def forward(self, z: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        out = self.mlp(z)                          # (B,7680)
+        gamma, beta = out.chunk(2, dim=1)          # each (B,3840)
+        return gamma, beta
 
 
-# ----------------------------------------------------------------------------------
-# 3)  Stage-modulator: broadcast γ,β across feature maps of a residual stage
-# ----------------------------------------------------------------------------------
-class _StageModulator(nn.Module):
-    def __init__(self, stage: nn.Module) -> None:
+class _ModBlock(nn.Module):
+    """Wraps a residual stage and applies affine γ/β modulation."""
+    def __init__(self, stage: nn.Sequential, n_ch: int):
         super().__init__()
         self.stage = stage
+        self.n_ch = n_ch
 
-    def forward(self, x: torch.Tensor, gamma: torch.Tensor, beta: torch.Tensor):
+    def forward(self, x, g, b):
         y = self.stage(x)
-        y = (gamma.view(-1, 1, 1, 1) * y) + beta.view(-1, 1, 1, 1)
-        return y
+        return g.view(-1, self.n_ch, 1, 1) * y + b.view(-1, self.n_ch, 1, 1)
 
 
-# ----------------------------------------------------------------------------------
-# 4)  LoFT wrapper that plugs the components into a ResNet-style backbone
-# ----------------------------------------------------------------------------------
 class LoFTAdapter(nn.Module):
-    """Wrap a torchvision ResNet backbone with LoFT conditioning.  Only ResNet
-    family is supported in this demo implementation because the original script
-    used ResNet-50 exclusively.
-    """
+    """Adapter that grafts LoFT onto a torchvision ResNet-50 backbone."""
+    CH = [256, 512, 1024, 2048]
 
-    def __init__(self, backbone: nn.Module):
+    def __init__(self, backbone: torchvision.models.ResNet):
         super().__init__()
-        if not hasattr(backbone, "layer1"):
-            raise ValueError("LoFTAdapter currently supports ResNet-style backbones only.")
-
-        self.encoder = CorruptionEncoder()
-        # In-dim must match encoder output (24) – keeps module flexible & bug-free
-        self.hyper   = HyperNetwork(in_dim=24, hidden=128)
-
-        # Decompose backbone into stem / four stages / head
-        self.stem = nn.Sequential(backbone.conv1, backbone.bn1, backbone.relu, backbone.maxpool)
-        self.layer1 = _StageModulator(backbone.layer1)
-        self.layer2 = _StageModulator(backbone.layer2)
-        self.layer3 = _StageModulator(backbone.layer3)
-        self.layer4 = _StageModulator(backbone.layer4)
-        self.avgpool = backbone.avgpool
-        self.fc      = backbone.fc
+        self.enc = CorruptionEncoder()
+        self.hnet = HyperNetwork()
+        # Backbone graft ----------------------------------------------------
+        self.stem   = nn.Sequential(backbone.conv1, backbone.bn1, backbone.relu, backbone.maxpool)
+        self.layer1 = _ModBlock(backbone.layer1, self.CH[0])
+        self.layer2 = _ModBlock(backbone.layer2, self.CH[1])
+        self.layer3 = _ModBlock(backbone.layer3, self.CH[2])
+        self.layer4 = _ModBlock(backbone.layer4, self.CH[3])
+        self.avgpool, self.fc = backbone.avgpool, backbone.fc
 
     def forward(self, x: torch.Tensor):
-        emb = self.encoder(x)               # (B,24)
-        gamma, beta = self.hyper(emb)       # each (B,4)
-        g1, g2, g3, g4 = gamma.unbind(1)    # (B,)
-        b1, b2, b3, b4 = beta.unbind(1)
-
+        z = self.enc(x)
+        g, b = self.hnet(z)                      # (B,3840) each
+        # Split per stage ---------------------------------------------------
+        splits = torch.split(torch.arange(3840), self.CH, dim=0)
+        g_s = [g[:, s] for s in splits]
+        b_s = [b[:, s] for s in splits]
         x = self.stem(x)
-        x = self.layer1(x, g1, b1)
-        x = self.layer2(x, g2, b2)
-        x = self.layer3(x, g3, b3)
-        x = self.layer4(x, g4, b4)
+        x = self.layer1(x, g_s[0], b_s[0])
+        x = self.layer2(x, g_s[1], b_s[1])
+        x = self.layer3(x, g_s[2], b_s[2])
+        x = self.layer4(x, g_s[3], b_s[3])
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
-        x = self.fc(x)
-        return x
+        return self.fc(x)
+
+# ---------------------------------------------------------------------------
+# 2)  Backbone factory & checkpoint loader
+# ---------------------------------------------------------------------------
+BACKBONE_FACTORY = {
+    "resnet50": lambda: torchvision.models.resnet50(weights=None),
+}
+
+VARIANTS = ["vanilla", "augmix", "bn_adapt", "damp", "stylenorm", "loft"]
+weights_root = Path("weights")
+
+def load_model(arch: str, variant: str, seed: int):
+    """Instantiate model architecture and load the corresponding checkpoint."""
+    fname = f"{arch}_{variant}_s{seed}.pt"
+    ckpt_path = weights_root / fname
+    if not ckpt_path.exists():
+        raise FileNotFoundError(f"Checkpoint {ckpt_path} not found – did you download weights?")
+    model = BACKBONE_FACTORY[arch]()
+    if variant == "loft":
+        model = LoFTAdapter(model)
+    state_dict = torch.load(ckpt_path, map_location="cpu")
+    model.load_state_dict(state_dict)
+    return model.to(DEVICE).eval()
+
+# ---------------------------------------------------------------------------
+# 3)  Quick implementation unit test (executed only when run directly)
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    print("Running LoFT unit-tests …", flush=True)
+    _test_img = torch.rand(2,3,224,224)
+    assert CorruptionEncoder()(_test_img).shape == (2,64), "Encoder output must be 64-D"
+    base = torchvision.models.resnet50(weights=None)
+    loft = LoFTAdapter(base)
+    params_ratio = sum(p.numel() for p in loft.parameters()) / sum(p.numel() for p in base.parameters())
+    assert params_ratio < 1.01, "LoFT adds more than 1 % parameters"
+    with torch.no_grad():
+        out = loft(_test_img)
+    assert out.shape == (2,1000), "Forward pass failed"
+    print(f"✓ LoFT implementation verified.  Extra params: {(params_ratio-1)*100:.2f} %")

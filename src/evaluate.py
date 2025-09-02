@@ -1,292 +1,192 @@
-"""evaluate.py
-Runs the three synthetic experiments, statistical analysis and plotting.  All
-heavy lifting (models & data) is imported from sibling modules.
 """
-
+evaluate.py
+All evaluation utilities + three experiments.
+"""
 from __future__ import annotations
-import os
-import time
-import random
-from typing import Dict, List, Tuple
+import time, random
+from pathlib import Path
+from typing import Tuple, Dict, List
 
-# ----------------------------------------------------------------------------------
-# 1)  Third-party imports with early failure on missing packages
-# ----------------------------------------------------------------------------------
 try:
     import torch
-    import torch.nn as nn
-    import numpy as np
-    import pandas as pd
-except Exception as e:
-    raise RuntimeError("Required scientific packages are missing: " + str(e))
-
-try:
-    import matplotlib
-    matplotlib.use("Agg")  # head-less back-end for server environments
+    import numpy as np, pandas as pd, scipy.stats as st
+    import seaborn as sns, matplotlib; matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    import seaborn as sns
-except Exception as e:
-    raise RuntimeError("matplotlib / seaborn are required: " + str(e))
-
-try:
-    import torchvision
-except Exception as e:
-    raise RuntimeError("torchvision is required: " + str(e))
-
-try:
     import ptflops
+    from torchmetrics.functional import accuracy as tm_accuracy
 except Exception as e:
-    raise RuntimeError("ptflops is required for FLOPs profiling: " + str(e))
+    raise RuntimeError("Missing required Python libraries – aborting: " + str(e))
 
-from .train import LoFTAdapter
-from .preprocess import get_loader, SEED
+from .train import DEVICE, VARIANTS, load_model, LoFTAdapter
+from .preprocess import build_loader, data_root
 
-# ----------------------------------------------------------------------------------
-# 2)  Reproducibility helpers & global device
-# ----------------------------------------------------------------------------------
-random.seed(SEED)
-np.random.seed(SEED)  # type: ignore
-torch.manual_seed(SEED)
+SEEDS = [11, 17, 23]
+fig_root = Path("figures"); fig_root.mkdir(exist_ok=True, parents=True)
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# ---------------------------------------------------------------------------
+# Metric helpers -------------------------------------------------------------
+clean_baseline_cache: Dict[str,float] = {}
 
-# ----------------------------------------------------------------------------------
-# 3)  Utility metrics & profiling helpers
-# ----------------------------------------------------------------------------------
-@torch.no_grad()
-def accuracy_top1(logits: torch.Tensor, targets: torch.Tensor) -> float:
-    preds = logits.argmax(dim=1)
-    return (preds == targets).float().mean().item() * 100.0
+def accuracy(logits, targets):
+    return tm_accuracy(logits.softmax(dim=1), targets, task="multiclass", num_classes=1000)
 
+def compute_mce(err_rate: float, corruption: str):
+    if corruption not in clean_baseline_cache:
+        raise KeyError(f"Baseline error for corruption '{corruption}' not computed")
+    return 100. * err_rate / clean_baseline_cache[corruption]
 
-def fake_mce() -> float:
-    """Deterministic pseudo-mCE so that plots look non-trivial."""
-    return 20.0 + random.Random(SEED).uniform(0, 15)
+# ---------------------------------------------------------------------------
+# Low-level evaluation utility ------------------------------------------------
 
+def evaluate_acc(model: torch.nn.Module, loader):
+    acc_meter = []
+    with torch.no_grad():
+        for x,y in loader:
+            x = x.to(DEVICE, non_blocking=True)
+            y = y.to(DEVICE, non_blocking=True)
+            logits = model(x)
+            acc_meter.append(accuracy(logits, y).cpu())
+    acc = torch.mean(torch.stack(acc_meter)).item()
+    return acc, 1-acc
 
-def _parse_flops_string(flops_str: str) -> float:
-    """Convert ptflops MAC string (e.g. '4.13 GMac', '862.54 MMac') → GMac float."""
-    # ptflops returns strings like '4.13 GMac' or '862.54 MMac'.  We split on
-    # whitespace to obtain the numeric value and the unit suffix.
-    parts = flops_str.strip().split()
-    if not parts:
-        raise ValueError(f"Empty FLOPs string: '{flops_str}'")
+# ---------------------------------------------------------------------------
+# EXPERIMENT 1 – Real-data robustness benchmark ------------------------------
 
-    value = float(parts[0])
-    unit = parts[1].lower() if len(parts) > 1 else "gmac"  # default unit = GMac
-
-    if unit.startswith("g"):
-        scale = 1.0           # already in GMac
-    elif unit.startswith("m"):
-        scale = 1e-3          # M → G
-    elif unit.startswith("k"):
-        scale = 1e-6          # K → G
-    else:
-        # Unexpected unit – assume the value is already in GMac to avoid crash
-        scale = 1.0
-    return value * scale
-
-
-def profile_model(model: nn.Module, batch_size: int = 1, reps: int = 20) -> Tuple[float, float]:
-    """Return (latency_ms, flops_G).  Falls back to CPU timing if CUDA is absent."""
-    dummy = torch.rand(batch_size, 3, 224, 224, device=device)
-
-    # ---------------- Latency ----------------
-    if torch.cuda.is_available():
-        starter, ender = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-        # warm-up
-        for _ in range(10):
-            _ = model(dummy)
-        torch.cuda.synchronize()
-        starter.record()
-        for _ in range(reps):
-            _ = model(dummy)
-        ender.record()
-        torch.cuda.synchronize()
-        latency = starter.elapsed_time(ender) / reps  # milliseconds
-    else:
-        # Simple CPU wall-clock timing
-        _ = model(dummy)  # warm-up
-        start = time.perf_counter()
-        for _ in range(reps):
-            _ = model(dummy)
-        latency = (time.perf_counter() - start) * 1000 / reps
-
-    # ---------------- FLOPs (MACs) ----------------
-    # ptflops only works on CPU models; we move the model there temporarily.
-    current_device = next(model.parameters()).device
-    model_cpu = model.cpu()
-    flops_str, _ = ptflops.get_model_complexity_info(model_cpu, (3, 224, 224),
-                                                     verbose=False, print_per_layer_stat=False)
-    flops_G = _parse_flops_string(flops_str)
-    # Restore original device so subsequent calls continue correctly.
-    model.to(current_device)
-    return latency, flops_G
-
-# ----------------------------------------------------------------------------------
-# 4)  Experiment 1 – Cross-corruption & One-shot robustness (synthetic)
-# ----------------------------------------------------------------------------------
-
-def run_experiment_1() -> None:
-    print("\n============================ EXPERIMENT 1 ============================")
-    print("Cross-corruption & One-shot Robustness Benchmark – *synthetic run*\n")
-
-    loaders = {
-        "batch256": get_loader(bs=64, n=256),
-        "one_shot": get_loader(bs=1,  n=16)
-    }
-
-    variants = {
-        "vanilla": torchvision.models.resnet50(weights=None),
-        "loft"   : LoFTAdapter(torchvision.models.resnet50(weights=None))
-    }
-    for model in variants.values():
-        model.to(device).eval()
-
-    results: Dict[str, Dict[str, float]] = {v: {} for v in variants}
-
-    for variant, model in variants.items():
-        for mode, loader in loaders.items():
-            accs: List[float] = []
-            for x, y in loader:
-                x, y = x.to(device), y.to(device)
-                with torch.no_grad():
-                    logits = model(x)
-                accs.append(accuracy_top1(logits, y))
-            mean_acc = float(np.mean(accs))
-            results[variant][f"acc_{mode}"] = mean_acc
-            results[variant][f"mCE_{mode}"] = fake_mce() + (0 if variant == "loft" else 10)
-
-    df = pd.DataFrame(results).T
-    print("\nSynthetic numerical results (mean over dataset):")
-    print(df.to_string(float_format="%.2f"))
-
-    # ----------------  Plotting  ----------------
-    os.makedirs("figures", exist_ok=True)
-    fig, ax = plt.subplots(figsize=(6, 4))
-    idx = np.arange(len(variants))
-    width = 0.35
-    clean_vals   = [results[v]["acc_batch256"] for v in variants]
-    corrupt_vals = [100 - results[v]["mCE_batch256"] for v in variants]
-    ax.bar(idx,         clean_vals,   width, label="Clean Acc")
-    ax.bar(idx + width, corrupt_vals, width, label="Robustness (100-mCE)")
-    ax.set_xticks(idx + width / 2)
-    ax.set_xticklabels(list(variants.keys()))
-    ax.set_ylabel("Accuracy (%)")
-    ax.set_title("Synthetic Clean vs. Corruption Accuracy")
-    for i, v in enumerate(clean_vals):
-        ax.text(i,         v + 0.5, f"{v:.1f}", ha='center', va='bottom')
-    for i, v in enumerate(corrupt_vals):
-        ax.text(i + width, v + 0.5, f"{v:.1f}", ha='center', va='bottom')
-    ax.legend()
-    fname = "figures/accuracy_loft_vs_baselines.pdf"
-    plt.savefig(fname, bbox_inches="tight")
-    print(f"\nFigure saved: {fname}")
-    print("====================================================================\n")
-
-# ----------------------------------------------------------------------------------
-# 5)  Experiment 2 – Component / signal ablation (synthetic)
-# ----------------------------------------------------------------------------------
-
-def run_experiment_2() -> None:
-    print("\n============================ EXPERIMENT 2 ============================")
-    print("Component & Signal Attribution Study – *synthetic run*\n")
-
-    base_backbone = torchvision.models.resnet50(weights=None)
-
-    def make_variant(tag: str):
-        if tag == "full":
-            return LoFTAdapter(base_backbone)
-        elif tag == "minus_freq":
-            model = LoFTAdapter(base_backbone)
-            # crudely simulate removal of frequency stats by zeroing corresponding weights
-            model.hyper.mlp[-1].weight.data[:, :12] = 0.0
-            return model
-        elif tag == "fixed_gb":
-            return torchvision.models.resnet50(weights=None)
-        else:
-            raise ValueError(tag)
-
-    variants = {k: make_variant(k) for k in ["full", "minus_freq", "fixed_gb"]}
-    loader = get_loader(bs=8, n=64)
-    severities = [1, 2, 3, 4, 5]
-
-    data: Dict[str, List[float]] = {v: [] for v in variants}
-
-    for sev in severities:
-        for tag, model in variants.items():
-            model.to(device).eval()
-            accs: List[float] = []
-            for x, y in loader:
-                x, y = x.to(device), y.to(device)
-                with torch.no_grad():
-                    logits = model(x)
-                accs.append(accuracy_top1(logits, y))
-            base_acc  = np.mean(accs)
-            penalty   = sev * (1.0 if tag == "full" else 2.0)  # synthetic degradation
-            robustness = max(base_acc - penalty, 0)
-            data[tag].append(robustness)
-
-    df = pd.DataFrame(data, index=[f"sev{n}" for n in severities])
-    print(df.to_string(float_format="%.2f"))
-
+def exp1_run():
+    print("\n================  EXPERIMENT 1 – REAL DATA BENCHMARK  ================")
+    arch = "resnet50"
+    # 0) baseline error per corruption ------------------------------------
+    print("Computing baseline errors …", flush=True)
+    base_model = load_model(arch, "vanilla", seed=11)
+    _ = evaluate_acc(base_model, build_loader("clean", 64))[0]
+    for corr in ["gaussian_noise", "defocus_blur", "jpeg", "brightness", "snow", "speckle_noise", "glass_blur", "fog"]:
+        err = 1 - evaluate_acc(base_model, build_loader(f"C/{corr}/s3", 64))[0]
+        clean_baseline_cache[corr] = err
+    # 1) evaluate all variants & seeds ------------------------------------
+    records = []
+    for variant in VARIANTS:
+        for seed in SEEDS:
+            mdl = load_model(arch, variant, seed)
+            clean_acc, _ = evaluate_acc(mdl, build_loader("clean",64))
+            es_acc, _    = evaluate_acc(mdl, build_loader("ES",64))
+            mce_vals = []
+            for corr in clean_baseline_cache:
+                acc, _ = evaluate_acc(mdl, build_loader(f"C/{corr}/s3",64))
+                mce_vals.append(compute_mce(1-acc, corr))
+            mce_mean = np.mean(mce_vals)
+            records.append(dict(variant=variant, seed=seed, clean=clean_acc*100,
+                                es=es_acc*100, mce=mce_mean))
+    df = pd.DataFrame(records)
+    print("\nRaw scores (mean±sd over seeds):")
+    print(df.groupby("variant").agg(["mean","std").round(2)][[("clean","mean"),("mce","mean"),("es","mean")]])
+    # paired t-test ---------------------------------------------------------
+    best_base = df[df.variant=="augmix"].set_index("seed")["mce"]
+    loft_vals = df[df.variant=="loft"].set_index("seed")["mce"]
+    t,p = st.ttest_rel(best_base, loft_vals)
+    print(f"\nPaired t-test LoFT vs AugMix:  t={t:.2f}  p={p:.4f}")
+    # Figure ---------------------------------------------------------------
     sns.set(style="whitegrid")
-    fig, ax = plt.subplots(figsize=(6, 4))
-    for tag, vals in data.items():
-        ax.plot(severities, vals, marker='o', label=tag)
-        for s, v in zip(severities, vals):
-            ax.text(s, v + 0.3, f"{v:.1f}", ha='center')
-    ax.set_xlabel("Corruption Severity")
-    ax.set_ylabel("Accuracy (%)")
-    ax.set_title("Synthetic mCE vs. Severity (higher ↑)")
-    ax.legend()
-    fname = "figures/mCE_severity_analysis.pdf"
+    fig, ax = plt.subplots(figsize=(6,4))
+    bar = df.groupby("variant")["mce"].mean().loc[VARIANTS]
+    ax.bar(range(len(bar)), bar)
+    ax.set_xticks(range(len(bar)))
+    ax.set_xticklabels(VARIANTS, rotation=20)
+    ax.set_ylabel("mCE (↓)")
+    ax.set_title("Mean Corruption Error – ResNet-50")
+    for i,v in enumerate(bar):
+        ax.text(i, v+0.4, f"{v:.1f}", ha='center')
+    fname = fig_root/"mCE_resnet_loft_vs_baselines.pdf"
     plt.savefig(fname, bbox_inches="tight")
-    print(f"\nFigure saved: {fname}")
+    print(f"Figure saved: {fname}")
     print("====================================================================\n")
 
-# ----------------------------------------------------------------------------------
-# 6)  Experiment 3 – Efficiency & deployment profiling
-# ----------------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# EXPERIMENT 2 – Ablations ---------------------------------------------------
 
-def run_experiment_3() -> None:
-    print("\n============================ EXPERIMENT 3 ============================")
-    print("Efficiency & Deployment Analysis – *synthetic run*\n")
+def make_ablation(tag: str):
+    base = __import__("torchvision").models.resnet50(weights=None)
+    if tag == "full":
+        return LoFTAdapter(base)
+    elif tag == "minus_freq":
+        mdl = LoFTAdapter(base)
+        mdl.enc.proj.weight.data[:12].zero_()
+        return mdl
+    elif tag == "fixed_gb":
+        return base
+    else:
+        raise ValueError(tag)
 
-    variants = {
-        "vanilla": torchvision.models.resnet50(weights=None),
-        "loft"   : LoFTAdapter(torchvision.models.resnet50(weights=None))
-    }
-
-    results: Dict[str, Dict[str, float]] = {}
-    for tag, model in variants.items():
-        model.to(device).eval()
-        lat1,  flops1  = profile_model(model, batch_size=1)
-        lat64, flops64 = profile_model(model, batch_size=64)
-        params = sum(p.numel() for p in model.parameters()) / 1e6  # M parameters
-        results[tag] = {
-            "Param_M"    : params,
-            "FLOPs_G"    : flops1,          # flops measured with batch-1 (representative)
-            "Latency1_ms": lat1,
-            "Latency64_ms": lat64
-        }
-
-    df = pd.DataFrame(results).T
-    print(df.to_string(float_format="%.2f"))
-
-    # Bar graph – latency @ batch-1
-    os.makedirs("figures", exist_ok=True)
-    fig, ax = plt.subplots(figsize=(5, 4))
-    vals = [results[t]["Latency1_ms"] for t in variants]
-    idx  = np.arange(len(variants))
-    ax.bar(idx, vals, color=['#4C72B0', '#55A868'])
-    ax.set_xticks(idx)
-    ax.set_xticklabels(list(variants.keys()))
-    ax.set_ylabel("Latency (ms)")
-    ax.set_title("Batch-1 Forward Latency")
-    for i, v in enumerate(vals):
-        ax.text(i, v + 0.2, f"{v:.2f}", ha='center')
-    fname = "figures/inference_latency.pdf"
+def exp2_run():
+    print("\n================  EXPERIMENT 2 – CAUSAL ABLATIONS  ==================")
+    variants = {k: make_ablation(k) for k in ["full","minus_freq","fixed_gb"]}
+    severities = [1,2,3,4,5]
+    corruption = "defocus_blur"
+    curves: Dict[str,List[float]] = {k:[] for k in variants}
+    for sev in severities:
+        split = f"C/{corruption}/s{sev}"
+        loader = build_loader(split, 64)
+        for tag, mdl in variants.items():
+            mdl.to(DEVICE).eval()
+            acc,_ = evaluate_acc(mdl, loader)
+            curves[tag].append(acc*100)
+    df = pd.DataFrame(curves, index=[f"sev{v}" for v in severities])
+    print(df.round(2))
+    fig, ax = plt.subplots(figsize=(6,4))
+    for tag, vals in curves.items():
+        ax.plot(severities, vals, marker='o', label=tag)
+        for s,v in zip(severities, vals):
+            ax.text(s, v+0.3, f"{v:.1f}", ha='center', fontsize=7)
+    ax.set_xlabel("Severity"); ax.set_ylabel("Accuracy (%)")
+    ax.set_title("Accuracy vs Severity – Defocus Blur")
+    ax.legend()
+    fname = fig_root/"mCE_severity_blur.pdf"
     plt.savefig(fname, bbox_inches="tight")
-    print(f"\nFigure saved: {fname}")
+    print(f"Figure saved: {fname}")
+    print("====================================================================\n")
+
+# ---------------------------------------------------------------------------
+# EXPERIMENT 3 – Efficiency profiling ---------------------------------------
+
+def _profile(model: torch.nn.Module, bs: int) -> Tuple[float,float]:
+    dummy = torch.randn(bs,3,224,224, device=DEVICE)
+    model(dummy)
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    starter, ender = torch.cuda.Event(True), torch.cuda.Event(True)
+    reps = 100
+    starter.record()
+    for _ in range(reps):
+        model(dummy)
+    ender.record();
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    lat = starter.elapsed_time(ender)/reps
+    flops, _ = ptflops.get_model_complexity_info(model.cpu(), (3,224,224), as_strings=False, print_per_layer_stat=False)
+    model.to(DEVICE)
+    return lat, flops/1e9
+
+def exp3_run():
+    print("\n================  EXPERIMENT 3 – EFFICIENCY PROFILING  ===============")
+    models = {
+        "vanilla": __import__("torchvision").models.resnet50(weights=None),
+        "loft"   : LoFTAdapter(__import__("torchvision").models.resnet50(weights=None))
+    }
+    res = {}
+    for tag, mdl in models.items():
+        mdl.eval().to(DEVICE)
+        lat1, fl1 = _profile(mdl, 1)
+        lat64, _  = _profile(mdl, 64)
+        params = sum(p.numel() for p in mdl.parameters())/1e6
+        res[tag] = dict(lat1=round(lat1,2), lat64=round(lat64,2), GFLOPs=round(fl1,2), params=round(params,2))
+    df = pd.DataFrame(res).T
+    print(df)
+    fig, ax = plt.subplots(figsize=(4,3))
+    ax.bar(df.index, df.lat1)
+    for i,v in enumerate(df.lat1):
+        ax.text(i, v+0.1, f"{v:.2f}", ha='center')
+    ax.set_ylabel("Latency (ms)")
+    ax.set_title("Batch-1 Inference Latency")
+    fname = fig_root/"inference_latency.pdf"
+    plt.savefig(fname, bbox_inches="tight")
+    print(f"Figure saved: {fname}")
     print("====================================================================\n")

@@ -3,6 +3,9 @@ torchvision
 timm
 numpy
 pandas
+scipy
+torchmetrics
 matplotlib
 seaborn
 ptflops
+pillow

@@ -1,49 +1,51 @@
-"""preprocess.py
-Synthetic data generation utilities used in the refactored project.  The real
-ImageNet dataset is far too large for the execution environment, therefore we
-retain the lightweight random-tensor dataset from the original script.
 """
-
+preprocess.py
+Dataset & dataloader utilities.
+"""
 from __future__ import annotations
-import random
-from typing import Tuple
+import random, os
+from pathlib import Path
+from typing import List, Tuple
 
 try:
-    import torch
-    from torch.utils.data import Dataset, DataLoader
+    import torch, torchvision, torchvision.transforms as T
 except Exception as e:
-    raise RuntimeError("PyTorch is required for data handling: " + str(e))
+    raise RuntimeError("Missing required Python libraries – aborting: " + str(e))
 
-try:
-    import numpy as np
-except Exception as e:
-    raise RuntimeError("numpy is required: " + str(e))
+# ---------------------------------------------------------------------------
+# Dataset root (7 k-image subset) -------------------------------------------
+# ---------------------------------------------------------------------------
+data_root = Path("data/subset_imagenet_c")
 
-# ----------------------------------------------------------------------------------
-# 1)  Global seed for reproducible synthetic data
-# ----------------------------------------------------------------------------------
-SEED: int = 42
-random.seed(SEED)
-np.random.seed(SEED)           # type: ignore
-torch.manual_seed(SEED)        # type: ignore
-
-# ----------------------------------------------------------------------------------
-# 2)  Synthetic ImageNet-shaped dataset & loader helper
-# ----------------------------------------------------------------------------------
-class SyntheticDataset(Dataset):
-    """Tiny random-tensor dataset that mimics ImageNet images & labels."""
-
-    def __init__(self, num_examples: int = 256):
-        self.X = torch.rand(num_examples, 3, 224, 224)
-        self.y = torch.randint(0, 1000, (num_examples,))
+class SubsetImageNet(torch.utils.data.Dataset):
+    """Subset of ImageNet-C / ‑C-bar / ES with real PNG files."""
+    def __init__(self, root: Path, split: str):
+        self.root = Path(root)
+        self.split = split
+        split_dir = self.root / split
+        if not split_dir.exists():
+            raise FileNotFoundError(f"Expected directory {split_dir} – please download subset_imagenet_c.zip and unzip under data/")
+        self.samples: List[Tuple[str,int]] = []
+        for cls_idx, cls in enumerate(sorted(p.name for p in split_dir.iterdir() if p.is_dir())):
+            for img_path in (split_dir/cls).glob("*.png"):
+                self.samples.append((str(img_path), cls_idx))
+        if not self.samples:
+            raise RuntimeError(f"No images found in {split_dir}")
+        self.tx = T.Compose([
+            T.ToTensor(),
+            T.Normalize(mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225])
+        ])
 
     def __len__(self):
-        return len(self.X)
+        return len(self.samples)
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        return self.X[idx], self.y[idx]
+    def __getitem__(self, idx):
+        path, label = self.samples[idx]
+        img = torchvision.io.read_image(path) / 255.0
+        return self.tx(img), label
 
 
-def get_loader(bs: int = 64, n: int = 256) -> DataLoader:
-    ds = SyntheticDataset(n)
-    return DataLoader(ds, batch_size=bs, shuffle=False)
+def build_loader(split: str, bs: int, shuffle: bool=False):
+    ds = SubsetImageNet(data_root, split)
+    return torch.utils.data.DataLoader(ds, batch_size=bs, shuffle=shuffle,
+                                       num_workers=4, pin_memory=True)
