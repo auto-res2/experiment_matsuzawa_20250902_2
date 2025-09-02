@@ -1,0 +1,18 @@
+  0%|          | 0.00/169M [00:00<?, ?B/s]  0%|          | 98.3k/169M [00:00<03:57, 710kB/s]  1%|          | 852k/169M [00:00<00:40, 4.17MB/s]  2%|▏         | 3.05M/169M [00:00<00:14, 11.6MB/s]  5%|▌         | 8.65M/169M [00:00<00:05, 28.3MB/s]  9%|▊         | 14.7M/169M [00:00<00:03, 39.6MB/s] 12%|█▏        | 21.0M/169M [00:00<00:03, 47.1MB/s] 16%|█▌        | 27.3M/169M [00:00<00:02, 52.3MB/s] 20%|█▉        | 33.6M/169M [00:00<00:02, 55.5MB/s] 24%|██▎       | 39.8M/169M [00:00<00:02, 57.6MB/s] 27%|██▋       | 45.9M/169M [00:01<00:02, 58.8MB/s] 31%|███       | 52.3M/169M [00:01<00:01, 60.0MB/s] 35%|███▍      | 58.6M/169M [00:01<00:01, 60.7MB/s] 38%|███▊      | 64.9M/169M [00:01<00:01, 61.3MB/s] 42%|████▏     | 71.2M/169M [00:01<00:01, 61.7MB/s] 46%|████▌     | 77.6M/169M [00:01<00:01, 62.0MB/s] 50%|████▉     | 84.0M/169M [00:01<00:01, 62.1MB/s] 53%|█████▎    | 90.3M/169M [00:01<00:01, 62.2MB/s] 57%|█████▋    | 96.7M/169M [00:01<00:01, 62.4MB/s] 61%|██████    | 103M/169M [00:01<00:01, 60.9MB/s]  65%|██████▍   | 109M/169M [00:02<00:01, 55.1MB/s] 68%|██████▊   | 116M/169M [00:02<00:00, 57.3MB/s] 72%|███████▏  | 122M/169M [00:02<00:00, 58.7MB/s] 76%|███████▌  | 128M/169M [00:02<00:00, 49.7MB/s] 79%|███████▊  | 133M/169M [00:02<00:00, 45.5MB/s] 82%|████████▏ | 138M/169M [00:02<00:00, 41.6MB/s] 84%|████████▍ | 142M/169M [00:02<00:00, 38.5MB/s] 87%|████████▋ | 146M/169M [00:03<00:00, 36.3MB/s] 89%|████████▊ | 150M/169M [00:03<00:00, 36.1MB/s] 91%|█████████ | 154M/169M [00:03<00:00, 36.1MB/s] 93%|█████████▎| 157M/169M [00:03<00:00, 34.3MB/s] 95%|█████████▌| 161M/169M [00:03<00:00, 34.4MB/s] 97%|█████████▋| 164M/169M [00:03<00:00, 35.0MB/s] 99%|█████████▉| 168M/169M [00:03<00:00, 35.4MB/s]100%|██████████| 169M/169M [00:03<00:00, 45.8MB/s]
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/main.py", line 32, in <module>
+    main()
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/main.py", line 21, in main
+    offline_sanity(epochs=1 if args.fast else 20)
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/evaluate.py", line 72, in offline_sanity
+    nn_loss.backward()
+  File "/home/runner/work/_tool/Python/3.11.13/x64/lib/python3.11/site-packages/torch/_tensor.py", line 647, in backward
+    torch.autograd.backward(
+  File "/home/runner/work/_tool/Python/3.11.13/x64/lib/python3.11/site-packages/torch/autograd/__init__.py", line 354, in backward
+    _engine_run_backward(
+  File "/home/runner/work/_tool/Python/3.11.13/x64/lib/python3.11/site-packages/torch/autograd/graph.py", line 829, in _engine_run_backward
+    return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Deterministic behavior was enabled with either `torch.use_deterministic_algorithms(True)` or `at::Context::setDeterministicAlgorithms(true)`, but this operation is not deterministic because it uses CuBLAS and you have CUDA >= 10.2. To enable deterministic behavior in this case, you must set an environment variable before running your PyTorch application: CUBLAS_WORKSPACE_CONFIG=:4096:8 or CUBLAS_WORKSPACE_CONFIG=:16:8. For more information, go to https://docs.nvidia.com/cuda/cublas/index.html#results-reproducibility
