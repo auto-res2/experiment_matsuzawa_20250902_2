@@ -1,74 +1,78 @@
-"""src/preprocess.py
-Dataset creation, transforms and high-level task splitting utilities.
+"""
+preprocess.py – data loading, transforms, determinism helpers
 """
 from __future__ import annotations
-from typing import List, Tuple
-import random
+import random, os
 from pathlib import Path
+from typing import List, Tuple
 
+import numpy as np
 import torch
-from torch.utils.data import Subset
 from torchvision import transforms, datasets
+from torch.utils.data import Subset
 
-# -----------------------------------------------------------------------------
-#  Global transforms (224×224 to match ResNet-18 default crop size)
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------
+#  Repository root & folders ----------------------------------------------------------
+# -------------------------------------------------------------------------------------
+ROOT = Path(__file__).resolve().parent.parent
+FIG_DIR = ROOT / "figures"; FIG_DIR.mkdir(exist_ok=True)
+RES_DIR = ROOT / "results"; RES_DIR.mkdir(exist_ok=True)
+DATA_DIR = ROOT / "data";    DATA_DIR.mkdir(exist_ok=True)
 
-NORMALISE = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                 std=[0.229, 0.224, 0.225])
+# -------------------------------------------------------------------------------------
+#  Determinism helpers ----------------------------------------------------------------
+# -------------------------------------------------------------------------------------
 
-BASIC_TRANSFORM = transforms.Compose([
-    transforms.Resize(224),
-    transforms.ToTensor(),
-    NORMALISE,
-])
+def set_seed(seed: int):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.use_deterministic_algorithms(True)
 
-AUG_TRANSFORM = transforms.Compose([
-    transforms.Resize(224),
-    transforms.RandomCrop(224, padding=4),
-    transforms.RandomHorizontalFlip(),
-    transforms.ToTensor(),
-    NORMALISE,
-])
+# -------------------------------------------------------------------------------------
+#  Image transforms -------------------------------------------------------------------
+# -------------------------------------------------------------------------------------
+MEAN = [0.485, 0.456, 0.406]
+STD = [0.229, 0.224, 0.225]
 
-# -----------------------------------------------------------------------------
-#  Generic N-way class split helper
-# -----------------------------------------------------------------------------
+TRAIN_TF = transforms.Compose(
+    [
+        transforms.Resize(224),
+        transforms.RandomCrop(224, padding=4),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize(MEAN, STD),
+    ]
+)
 
-def split_dataset(dataset: datasets.VisionDataset, class_order: List[int], split_size: int) -> List[Subset]:
-    tasks: List[Subset] = []
-    for i in range(0, len(class_order), split_size):
-        cls = class_order[i: i + split_size]
-        idx = [j for j, y in enumerate(getattr(dataset, "targets")) if y in cls]
-        tasks.append(Subset(dataset, idx))
+TEST_TF = transforms.Compose(
+    [
+        transforms.Resize(224),
+        transforms.ToTensor(),
+        transforms.Normalize(MEAN, STD),
+    ]
+)
+
+# -------------------------------------------------------------------------------------
+#  Continual-learning task splits ------------------------------------------------------
+# -------------------------------------------------------------------------------------
+
+def _split_by_class(ds: datasets.VisionDataset, order: List[int], classes_per_task: int) -> List[Subset]:
+    """Return a list of Subsets, each with *classes_per_task* contiguous classes."""
+    targets = np.array(ds.targets)
+    tasks = []
+    for i in range(0, len(order), classes_per_task):
+        cls = order[i : i + classes_per_task]
+        idx = np.where(np.isin(targets, cls))[0]
+        tasks.append(Subset(ds, idx))
     return tasks
 
-# -----------------------------------------------------------------------------
-#  CIFAR-100 split-10×10 as used in the paper
-# -----------------------------------------------------------------------------
 
-def get_split_cifar100(*, root: str | Path = "./data") -> Tuple[List[Subset], List[Subset]]:
-    class_order = list(range(100))
-    random.shuffle(class_order)
-    train_ds = datasets.CIFAR100(root=root, train=True, download=True, transform=AUG_TRANSFORM)
-    test_ds  = datasets.CIFAR100(root=root, train=False, download=True, transform=BASIC_TRANSFORM)
-    train_tasks = split_dataset(train_ds, class_order, 10)
-    test_tasks  = split_dataset(test_ds,  class_order, 10)
-    return train_tasks, test_tasks
-
-# -----------------------------------------------------------------------------
-#  (Optional) Rotated-MNIST stub – real implementation is in supplementary repo
-# -----------------------------------------------------------------------------
-
-from torchvision.datasets import MNIST
-
-class RotatedMNIST(MNIST):
-    def __init__(self, *a, rotation: float = 0.0, **kw):
-        base_transform = kw.get("transform", transforms.ToTensor())
-        super().__init__(*a, transform=base_transform, **kw)
-        self.rotation = rotation
-
-    def __getitem__(self, idx):
-        x, y = super().__getitem__(idx)
-        x = transforms.functional.rotate(x, self.rotation)
-        return x, y
+def get_split_cifar(order: List[int] | None = None) -> Tuple[List[Subset], List[Subset]]:
+    if order is None:
+        order = list(range(100))
+        random.shuffle(order)
+    tr = datasets.CIFAR100(DATA_DIR, train=True, download=True, transform=TRAIN_TF)
+    te = datasets.CIFAR100(DATA_DIR, train=False, download=True, transform=TEST_TF)
+    return _split_by_class(tr, order, 10), _split_by_class(te, order, 10)

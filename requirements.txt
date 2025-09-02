@@ -9,3 +9,4 @@ advertorch
 tqdm
 pynvml
 psutil
+scipy

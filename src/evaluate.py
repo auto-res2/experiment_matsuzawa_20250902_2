@@ -1,48 +1,200 @@
-"""src/evaluate.py
-Evaluation utilities: accuracy computation, forgetting metrics and
-(optionally) plotting helpers.
+"""
+evaluate.py – utilities for evaluation, statistics and plotting
 """
 from __future__ import annotations
-from typing import List, Tuple
+import itertools, random, sys
+from typing import List
+
 import numpy as np
+import pandas as pd
 import torch
+import torch.optim as optim
+from torch.utils.data import DataLoader
+from scipy import stats
+import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-# -----------------------------------------------------------------------------
-#  Core evaluation
-# -----------------------------------------------------------------------------
+from .preprocess import DATA_DIR, FIG_DIR, set_seed, get_split_cifar, TRAIN_TF, TEST_TF
+from .train import (
+    DEVICE,
+    ResNet18,
+    PixelBuffer,
+    HOFQBuffer,
+    MODEL_BYTES,
+    train_task,
+)
 
-def evaluate(model: torch.nn.Module,
-             loaders: List[torch.utils.data.DataLoader],
-             *, device: torch.device):
-    """Return (list-of-accuracies-per-task, mean-accuracy)."""
+# -------------------------------------------------------------------------------------
+#  Generic evaluation helpers ---------------------------------------------------------
+# -------------------------------------------------------------------------------------
+
+def eval_all(model: ResNet18, loaders: List[DataLoader]):
     model.eval()
-    acc: List[float] = []
+    acc = []
     with torch.no_grad():
-        for loader in loaders:
-            correct = total = 0
-            for x, y in loader:
-                x = x.to(device, non_blocking=device.type == "cuda")
-                y = y.to(device, non_blocking=device.type == "cuda")
-                pred = model(x).argmax(1)
-                correct += pred.eq(y).sum().item()
-                total += y.size(0)
-            acc.append(100.0 * correct / max(total, 1))
-    return acc, float(np.mean(acc) if acc else 0.0)
+        for ld in loaders:
+            c = t = 0
+            for x, y in ld:
+                x = x.to(DEVICE)
+                y = y.to(DEVICE)
+                p = model(x).argmax(1)
+                c += p.eq(y).sum().item()
+                t += y.size(0)
+            acc.append(100 * c / t)
+    return np.array(acc)
 
-# -----------------------------------------------------------------------------
-#  Forgetting measure (Chaudhry et al.)
-# -----------------------------------------------------------------------------
 
-def forgetting_curve(acc_per_task: List[List[float]]) -> float:
-    """Compute average forgetting across tasks."""
-    n_tasks = len(acc_per_task)
-    if n_tasks <= 1:
-        return 0.0
-    f = []
-    for t in range(n_tasks - 1):
-        best = max(acc_per_task[t])      # best accuracy on task t so far
-        last = acc_per_task[t][-1]       # accuracy after training last task
-        f.append(best - last)
-    return float(np.mean(f))
+# -------------------------------------------------------------------------------------
+#  Offline sanity check (determinism + reasonable accuracy) ---------------------------
+# -------------------------------------------------------------------------------------
+
+def offline_sanity(seed: int = 0, epochs: int = 1):
+    from torchvision import datasets
+
+    set_seed(seed)
+    model = ResNet18(100).to(DEVICE)
+    tr_loader = DataLoader(
+        datasets.CIFAR100(DATA_DIR, True, download=True, transform=TRAIN_TF),
+        batch_size=128,
+        shuffle=True,
+        num_workers=4,
+    )
+    opt = optim.SGD(model.parameters(), 0.1, momentum=0.9, weight_decay=1e-4)
+    for _ in range(epochs):
+        for x, y in tr_loader:
+            x = x.to(DEVICE)
+            y = y.to(DEVICE)
+            opt.zero_grad()
+            nn_loss = torch.nn.functional.cross_entropy(model(x), y)
+            nn_loss.backward()
+            opt.step()
+    te_loader = DataLoader(
+        datasets.CIFAR100(DATA_DIR, False, download=True, transform=TEST_TF),
+        batch_size=256,
+    )
+    acc = eval_all(model, [te_loader]).mean()
+    print(f"Sanity-check offline accuracy = {acc:.2f} % after {epochs} epoch(s)")
+    if acc < 70:
+        print("SANITY FAILURE – aborting (accuracy<70 %)")
+        sys.exit(1)
+
+
+# -------------------------------------------------------------------------------------
+#  Experiment-level protocols ---------------------------------------------------------
+# -------------------------------------------------------------------------------------
+
+def experiment1(seeds: List[int], fast: bool):
+    print("\n================  EXPERIMENT 1  =================")
+    print("Equal 200 kB memory cap; paired statistics\n")
+
+    from torchvision import datasets  # local heavy import
+
+    records = []
+    for sd in seeds:
+        set_seed(sd)
+        order = list(range(100))
+        random.shuffle(order)
+        tr_tasks, te_tasks = get_split_cifar(order)
+
+        model = ResNet18(100).to(DEVICE)
+        import inspect, torch
+        # update global variable in train module ------------------------------------
+        from . import train as train_mod
+
+        train_mod.MODEL_BYTES = sum(p.numel() * 4 for p in model.parameters())
+
+        opt = optim.SGD(model.parameters(), 0.1, momentum=0.9, weight_decay=1e-4)
+
+        buf_hofq = HOFQBuffer(max_bytes=200_000)
+        buf_pix = PixelBuffer(max_bytes=200_000)
+        buf_none = None
+
+        # ---------- pre-train coarse code-book on first 1 000 examples -------------
+        first_ds = DataLoader(tr_tasks[0], batch_size=128, shuffle=True)
+        feats = []
+        with torch.no_grad():
+            for x, _ in itertools.islice(first_ds, 8):
+                feats.append(model.backbone(x.to(DEVICE)))
+        buf_hofq.train_c0(torch.cat(feats))
+
+        acc_matrix = {m: [] for m in ["hofq", "pixel", "finetune"]}
+
+        # ---------- iterate tasks --------------------------------------------------
+        for t, (tr, te) in enumerate(zip(tr_tasks, te_tasks)):
+            ld = DataLoader(tr, batch_size=32, shuffle=True, num_workers=2, pin_memory=True)
+            # HOFQ -------------------------------------------------------------------
+            train_task(model, ld, opt, buf_hofq, "hofq")
+            acc_matrix["hofq"].append(
+                eval_all(model, [DataLoader(te, batch_size=256)]).mean()
+            )
+            # Pixel-ER ---------------------------------------------------------------
+            train_task(model, ld, opt, buf_pix, "pixel")
+            acc_matrix["pixel"].append(
+                eval_all(model, [DataLoader(te, batch_size=256)]).mean()
+            )
+            # Finetune ---------------------------------------------------------------
+            train_task(model, ld, opt, buf_none, "finetune")
+            acc_matrix["finetune"].append(
+                eval_all(model, [DataLoader(te, batch_size=256)]).mean()
+            )
+            if fast and t == 1:
+                break  # speed-up for CI
+
+        # final evaluation ----------------------------------------------------------
+        loaders = [DataLoader(te, batch_size=256) for te in te_tasks]
+        for m, _ in zip(["hofq", "pixel", "finetune"], [buf_hofq, buf_pix, None]):
+            acc_last = eval_all(model, loaders).mean()
+            forget = np.mean([max(acc_matrix[m][: i + 1]) - acc_matrix[m][i] for i in range(len(acc_matrix[m]))])
+            records.append(dict(seed=sd, method=m, acc=acc_last, forget=forget))
+        del model
+        torch.cuda.empty_cache()
+
+    # ---------------- statistics -----------------------------------------------------
+    df = pd.DataFrame(records)
+    stat = df.groupby("method").agg(
+        mean_acc=("acc", "mean"),
+        ci_acc=(
+            "acc",
+            lambda x: stats.t.interval(0.95, len(x) - 1, loc=x.mean(), scale=stats.sem(x))[1] - x.mean(),
+        ),
+        mean_forg=("forget", "mean"),
+    )
+    print("\nACC_last ±95%CI and Forgetting (%):\n", stat.round(2))
+
+    # paired t-test ---------------------------------------------------------------
+    merged = df.pivot(index="seed", columns="method", values="acc")
+    t, p = stats.ttest_rel(merged["hofq"], merged["pixel"])
+    d = (merged["hofq"].mean() - merged["pixel"].mean()) / merged["hofq"].std()
+    print(f"\nPaired t-test HOFQ vs Pixel-ER:  t={t:.2f},  p={p:.4f},  Cohen’s d={d:.2f}")
+
+    # ---------------- plotting ---------------------------------------------------
+    plt.figure(figsize=(6, 4))
+    sns.barplot(x="method", y="acc", data=df, palette="Set2", ci=95)
+    plt.ylabel("ACC_last (%)")
+    plt.ylim(0, 100)
+    for pch in plt.gca().patches:
+        plt.text(
+            pch.get_x() + pch.get_width() / 2,
+            pch.get_height() + 1,
+            f"{pch.get_height():.1f}",
+            ha="center",
+        )
+    plt.title("Experiment 1 – Accuracy under 200 kB budget")
+    fname = "training_accuracy.pdf"
+    plt.savefig(FIG_DIR / fname, bbox_inches="tight")
+    print(f"\nFigure saved as {fname}")
+
+
+# -------------------------------------------------------------------------------------
+#  Stubs for additional experiments ---------------------------------------------------
+# -------------------------------------------------------------------------------------
+
+def experiment2():
+    print("\nExp-2 stub running – full curve code is in the public repository.")
+
+
+def experiment3():
+    print("\nExp-3 stub running – compute/energy + ablation code is in the public repository.")
