@@ -1,1 +1,13 @@
-# Please list the required python packages.
+numpy
+pandas
+torch
+torchvision
+timm
+scikit-learn
+matplotlib
+seaborn
+requests
+tqdm
+pillow
+fvcore
+scipy
