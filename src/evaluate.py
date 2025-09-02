@@ -1,4 +1,3 @@
-```python
 """src/evaluate.py
 ---------------------------------------------------------------------
 Contains experiment definitions, statistical analysis, and plotting
@@ -42,7 +41,6 @@ from .train import (
 # ------------------------------------------------------------------
 #  Helper – robust metric extraction (Avalanche API changed over time)
 # ------------------------------------------------------------------
-
 
 def _find_metric(metrics: Dict[str, Any], name_substr: str) -> float:
     """Return the first metric whose key contains *name_substr* (case-insensitive).
@@ -89,11 +87,9 @@ def _find_metric(metrics: Dict[str, Any], name_substr: str) -> float:
         )
     return float(metrics[key])
 
-
 # ==================================================================
 #  Experiment 1 – Memory × Accuracy trade-off on Split CIFAR-100
 # ==================================================================
-
 
 def run_experiment_1():
     print(
@@ -213,4 +209,3 @@ def run_experiment_1():
     print("\nNumerical results (single seed):")
     print(df.to_string(index=False))
     print("Figures generated:\n  – accuracy_memtradeoff.pdf\n  – forgetting_memtradeoff.pdf")
-```
