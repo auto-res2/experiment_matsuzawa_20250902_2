@@ -1,0 +1,22 @@
+  0%|          | 0.00/169M [00:00<?, ?B/s]  2%|▏         | 2.72M/169M [00:00<00:06, 27.1MB/s]  8%|▊         | 13.3M/169M [00:00<00:02, 73.3MB/s] 14%|█▍        | 23.9M/169M [00:00<00:01, 87.9MB/s] 21%|██        | 34.7M/169M [00:00<00:01, 96.1MB/s] 27%|██▋       | 45.2M/169M [00:00<00:01, 99.2MB/s] 33%|███▎      | 56.0M/169M [00:00<00:01, 102MB/s]  39%|███▉      | 66.7M/169M [00:00<00:00, 104MB/s] 46%|████▌     | 77.3M/169M [00:00<00:00, 104MB/s] 52%|█████▏    | 88.1M/169M [00:00<00:00, 105MB/s] 58%|█████▊    | 98.8M/169M [00:01<00:00, 106MB/s] 65%|██████▍   | 109M/169M [00:01<00:00, 106MB/s]  71%|███████   | 120M/169M [00:01<00:00, 106MB/s] 77%|███████▋  | 131M/169M [00:01<00:00, 106MB/s] 84%|████████▎ | 141M/169M [00:01<00:00, 106MB/s] 90%|█████████ | 152M/169M [00:01<00:00, 106MB/s] 96%|█████████▋| 163M/169M [00:01<00:00, 106MB/s]100%|██████████| 169M/169M [00:01<00:00, 102MB/s]
+/home/runner/work/_tool/Python/3.11.13/x64/lib/python3.11/site-packages/torchvision/models/_utils.py:208: UserWarning: The parameter 'pretrained' is deprecated since 0.13 and may be removed in the future, please use 'weights' instead.
+  warnings.warn(
+/home/runner/work/_tool/Python/3.11.13/x64/lib/python3.11/site-packages/torchvision/models/_utils.py:223: UserWarning: Arguments other than a weight enum or `None` for 'weights' are deprecated since 0.13 and may be removed in the future. The current behavior is equivalent to passing `weights=None`.
+  warnings.warn(msg)
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/main.py", line 129, in <module>
+    experiment1(device=device)
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/main.py", line 74, in experiment1
+    train_single_task(model, loader, optimizer, criterion, m_key, buffer, t, device=device)
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/train.py", line 179, in train_single_task
+    loss.backward()
+  File "/home/runner/work/_tool/Python/3.11.13/x64/lib/python3.11/site-packages/torch/_tensor.py", line 647, in backward
+    torch.autograd.backward(
+  File "/home/runner/work/_tool/Python/3.11.13/x64/lib/python3.11/site-packages/torch/autograd/__init__.py", line 354, in backward
+    _engine_run_backward(
+  File "/home/runner/work/_tool/Python/3.11.13/x64/lib/python3.11/site-packages/torch/autograd/graph.py", line 829, in _engine_run_backward
+    return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Deterministic behavior was enabled with either `torch.use_deterministic_algorithms(True)` or `at::Context::setDeterministicAlgorithms(true)`, but this operation is not deterministic because it uses CuBLAS and you have CUDA >= 10.2. To enable deterministic behavior in this case, you must set an environment variable before running your PyTorch application: CUBLAS_WORKSPACE_CONFIG=:4096:8 or CUBLAS_WORKSPACE_CONFIG=:16:8. For more information, go to https://docs.nvidia.com/cuda/cublas/index.html#results-reproducibility
