@@ -20,8 +20,20 @@ import torch.nn.functional as F
 import torch.optim as optim
 from tqdm import tqdm
 
+# --------------------------------------------------------------------
 # Avalanche (continual-learning framework)
-from avalanche.training.strategies import Replay
+# --------------------------------------------------------------------
+# The location of the Replay strategy changed around Avalanche v0.5.
+# We therefore try the new import path first and fall back to the old
+# one for backwards compatibility.
+# --------------------------------------------------------------------
+try:
+    # ≥ 0.5.0
+    from avalanche.training.supervised import Replay  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover – legacy path
+    # < 0.5.0
+    from avalanche.training.strategies import Replay  # type: ignore
+
 from avalanche.training.plugins import EvaluationPlugin
 from avalanche.evaluation.metrics import (
     accuracy_metrics,
@@ -44,6 +56,7 @@ __all__ = [
 # =====================================================================
 #  Bit-Pack Replay buffer (simplified reference implementation)
 # =====================================================================
+
 
 class BitPackBuffer:
     """A *reference* implementation of Bit-Pack Replay (BPR).
@@ -145,7 +158,7 @@ class BitPackBuffer:
             code = self.codes[i]
             if code.dtype == np.uint8 and code.size == self.rank:
                 z = code.astype(np.float32) / 255.0  # [0,1]
-                proj = z * 2.0 - 1.0                 # naïve un-quantise
+                proj = z * 2.0 - 1.0  # naïve un-quantise
                 x_flat = self._pca.inverse_transform(proj[np.newaxis, :])[0] + self.mean_
                 x_img = np.clip(x_flat, 0, 1).astype(np.float32).reshape(self.img_shape)
                 imgs_rec.append(x_img)
@@ -171,9 +184,11 @@ class BitPackBuffer:
     def __len__(self):
         return len(self.codes)
 
+
 # =====================================================================
 #  Baseline: raw float32 image ring-buffer
 # =====================================================================
+
 
 class RawRingBuffer:
     """Stores raw float32 images in a ring, subject to memory budget."""
@@ -209,9 +224,24 @@ class RawRingBuffer:
     def __len__(self):
         return len(self.images)
 
+
 # =====================================================================
 #  Core training routine – Experience Replay with pluggable buffer
 # =====================================================================
+
+
+def _make_dataloader(dataset, batch_size: int):
+    """Utility that falls back to a plain PyTorch DataLoader when
+    the (newer) Avalanche helper is not available."""
+
+    # Newer Avalanche versions expose an adapted_dataset_dataloader helper
+    # which takes care of task-aware transformations.  If it is not
+    # present (or we are running with a custom strategy) we revert to a
+    # standard shuffled DataLoader.
+    from torch.utils.data import DataLoader
+
+    return DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
+
 
 def train_experience_replay(
     model: nn.Module,
@@ -256,14 +286,22 @@ def train_experience_replay(
         print(f"\n=== Task {task_id}: classes {experience.classes_in_this_experience}")
 
         for epoch in range(n_epochs_per_task):
-            loader = strategy.adapted_dataset_dataloader(
-                experience.dataset, batch_size
-            )
+            # Use the native helper if it exists; otherwise fall back.
+            if hasattr(strategy, "adapted_dataset_dataloader"):
+                loader = strategy.adapted_dataset_dataloader(
+                    experience.dataset, batch_size
+                )
+            else:
+                loader = _make_dataloader(experience.dataset, batch_size)
+
             pbar = tqdm(loader, desc=f"task {task_id} / epoch {epoch}")
-            for imgs, labels, *_ in pbar:
+            for batch in pbar:
+                # Avalanche datasets may return additional fields (task-id,
+                # sample-id, …).  We only require (x, y).
+                imgs, labels = batch[0], batch[1]
                 imgs, labels = imgs.to(DEVICE), labels.to(DEVICE)
 
-                # ------- construct replay batch (if buffer non-empty)
+                # ------- construct replay batch (if buffer non-empty) -----
                 if len(buffer):
                     imgs_re, labs_re = buffer.sample(min(batch_size // 2, len(buffer)))
                     imgs_re = imgs_re.to(DEVICE)
