@@ -16,9 +16,12 @@ from typing import List, Tuple
 # 1)  Corruption-encoder (fast, physically interpretable statistics)
 # ----------------------------------------------------------------------------------
 class CorruptionEncoder(nn.Module):
-    """Compute a 36-D embedding composed of frequency-domain power, colour
+    """Compute a 24-D embedding composed of frequency-domain power, colour
     moments, edge density and blur variance.  The implementation is identical
     to the monolithic experimental script but condensed into a reusable module.
+    Note: the previous doc-string incorrectly stated *36-D* – the actual number
+    of features used in the inference-only pipeline is 24 (12 frequency +
+    6 colour + 3 edge + 3 blur).
     """
 
     def __init__(self) -> None:
@@ -63,8 +66,8 @@ class CorruptionEncoder(nn.Module):
         blur_var = lap.var(dim=(-2, -1))
         feats.append(blur_var)
 
-        feat = torch.cat(feats, dim=1)   # (B,36)
-        proj = torch.log1p(feat)         # (B,36) – log-scale for stability
+        feat = torch.cat(feats, dim=1)   # (B,24)
+        proj = torch.log1p(feat)         # (B,24) – log-scale for stability
         return proj
 
 
@@ -72,7 +75,7 @@ class CorruptionEncoder(nn.Module):
 # 2)  Hyper-network: predicts affine γ,β scalars for four stages
 # ----------------------------------------------------------------------------------
 class HyperNetwork(nn.Module):
-    def __init__(self, in_dim: int = 36, hidden: int = 128) -> None:
+    def __init__(self, in_dim: int = 24, hidden: int = 128) -> None:
         super().__init__()
         self.mlp = nn.Sequential(
             nn.Linear(in_dim, hidden), nn.ReLU(inplace=True),
@@ -114,7 +117,8 @@ class LoFTAdapter(nn.Module):
             raise ValueError("LoFTAdapter currently supports ResNet-style backbones only.")
 
         self.encoder = CorruptionEncoder()
-        self.hyper   = HyperNetwork(in_dim=36, hidden=128)
+        # In-dim must match encoder output (24) – keeps module flexible & bug-free
+        self.hyper   = HyperNetwork(in_dim=24, hidden=128)
 
         # Decompose backbone into stem / four stages / head
         self.stem = nn.Sequential(backbone.conv1, backbone.bn1, backbone.relu, backbone.maxpool)
@@ -126,7 +130,7 @@ class LoFTAdapter(nn.Module):
         self.fc      = backbone.fc
 
     def forward(self, x: torch.Tensor):
-        emb = self.encoder(x)               # (B,36)
+        emb = self.encoder(x)               # (B,24)
         gamma, beta = self.hyper(emb)       # each (B,4)
         g1, g2, g3, g4 = gamma.unbind(1)    # (B,)
         b1, b2, b3, b4 = beta.unbind(1)
