@@ -7,6 +7,7 @@ from __future__ import annotations
 import math
 import random
 import time
+import os  # Added: required for os.cpu_count()
 from pathlib import Path
 from typing import List, Tuple
 
