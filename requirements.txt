@@ -1,1 +1,10 @@
-# Please list the required python packages.
+torch
+torchvision
+diffusers
+accelerate
+numpy
+pandas
+matplotlib
+seaborn
+scikit-learn
+fvcore
