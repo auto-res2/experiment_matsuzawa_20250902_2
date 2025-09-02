@@ -1,0 +1,13 @@
+Fatal error during Experiment 1:
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/main.py", line 139, in <module>
+    main()
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/main.py", line 135, in main
+    raise exc
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/main.py", line 132, in main
+    run_experiment_1()
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/main.py", line 48, in run_experiment_1
+    raise RuntimeError(
+RuntimeError: Counterfactual images not found. Set WATERBIRDS_CF_ROOT to directory containing pre-generated CFs.
