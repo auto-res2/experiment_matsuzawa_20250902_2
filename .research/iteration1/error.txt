@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/main.py", line 18, in <module>
+    from avalanche.training.strategies import DER, Replay
+ModuleNotFoundError: No module named 'avalanche.training.strategies'
