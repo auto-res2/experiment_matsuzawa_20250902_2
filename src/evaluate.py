@@ -53,7 +53,7 @@ def evaluate_acc(model: torch.nn.Module, loader):
 # EXPERIMENT 1 – Real-data robustness benchmark ------------------------------
 
 def exp1_run():
-    print("\n================  EXPERIMENT 1 – REAL DATA BENCHMARK  ================")
+    print("\n================  EXPERIMENT 1 – REAL DATA BENCHMARK  ================" )
     arch = "resnet50"
     # 0) baseline error per corruption ------------------------------------
     print("Computing baseline errors …", flush=True)
@@ -78,7 +78,9 @@ def exp1_run():
                                 es=es_acc*100, mce=mce_mean))
     df = pd.DataFrame(records)
     print("\nRaw scores (mean±sd over seeds):")
-    print(df.groupby("variant").agg(["mean","std").round(2)][[("clean","mean"),("mce","mean"),("es","mean")]])
+    # --- FIXED: Correct bracket placement ---------------------------------
+    stats_df = df.groupby("variant").agg(["mean","std"]).round(2)
+    print(stats_df[[("clean","mean"),("mce","mean"),("es","mean")]])
     # paired t-test ---------------------------------------------------------
     best_base = df[df.variant=="augmix"].set_index("seed")["mce"]
     loft_vals = df[df.variant=="loft"].set_index("seed")["mce"]

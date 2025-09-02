@@ -106,7 +106,8 @@ class LoFTAdapter(nn.Module):
         z = self.enc(x)
         g, b = self.hnet(z)                      # (B,3840) each
         # Split per stage ---------------------------------------------------
-        splits = torch.split(torch.arange(3840), self.CH, dim=0)
+        idx = torch.arange(3840, device=g.device)
+        splits = torch.split(idx, self.CH)
         g_s = [g[:, s] for s in splits]
         b_s = [b[:, s] for s in splits]
         x = self.stem(x)
