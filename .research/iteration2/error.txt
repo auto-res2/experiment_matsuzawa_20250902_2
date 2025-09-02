@@ -1,0 +1,11 @@
+usage: HARD diffusion experiments [-h] [--exp {1,2,3}]
+                                  [--output_dir OUTPUT_DIR]
+                                  [--prompt_json PROMPT_JSON]
+
+options:
+  -h, --help            show this help message and exit
+  --exp {1,2,3}         Which experiment to run (omit for a dry run)
+  --output_dir OUTPUT_DIR
+                        Folder for results
+  --prompt_json PROMPT_JSON
+                        Prompt list (Experiment-2)
