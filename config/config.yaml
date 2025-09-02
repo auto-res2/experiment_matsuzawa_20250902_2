@@ -1,0 +1,9 @@
+device: auto
+seeds: [1, 2]
+epochs: 30
+patience: 20
+depths: [2, 8, 32]
+hidden: 64
+dataset_root: data
+fig_dir: figures
+exp1_datasets: [Cora]

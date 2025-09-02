@@ -1,1 +1,13 @@
-# Please list the required python packages.
+numpy
+torch
+torch_geometric
+ogb
+matplotlib
+seaborn
+tqdm
+requests
+scipy
+scikit_learn
+networkx
+fvcore
+pyyaml
