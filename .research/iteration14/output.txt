@@ -1,0 +1,12 @@
+=== pip install start Tue Sep  2 15:23:07 UTC 2025 ===
+Collecting torch==2.2.1 (from -r requirements.txt (line 12))
+  Using cached torch-2.2.1-cp311-cp311-manylinux1_x86_64.whl.metadata (26 kB)
+Collecting torch_geometric==2.5.0 (from -r requirements.txt (line 13))
+  Using cached torch_geometric-2.5.0-py3-none-any.whl.metadata (64 kB)
+Collecting torch_scatter==2.1.2 (from -r requirements.txt (line 14))
+  Using cached torch_scatter-2.1.2.tar.gz (108 kB)
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Getting requirements to build wheel: started
+  Getting requirements to build wheel: finished with status 'error'
+=== experiment start Tue Sep  2 15:23:08 UTC 2025 ===
