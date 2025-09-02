@@ -10,4 +10,3 @@ seaborn
 tqdm
 ptflops
 pillow
-pytorch-grad-cam
