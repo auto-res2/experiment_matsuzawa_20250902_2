@@ -1,0 +1,10 @@
+{
+  "research_topic": "画像-テキスト検索を「R@1とレイテンシ」に関して改善したい ",
+  "queries": [
+    "image-text retrieval latency",
+    "R@1 retrieval improvement",
+    "efficient cross-modal retrieval",
+    "low-latency contrastive learning",
+    "fast image-caption search"
+  ]
+}
