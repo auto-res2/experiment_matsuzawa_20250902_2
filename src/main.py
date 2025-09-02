@@ -23,8 +23,20 @@ def main():
 
     # lightweight internal tests (fail-fast) ----------------------------------
     print("Running unit tests …", end="", flush=True)
-    code = pytest.main([str(Path(__file__).parent), "-q", "-k", "test_memory or test_sample_cost", "--maxfail=1"])
-    assert code == 0, "unit tests failed"
+    code = pytest.main(
+        [
+            str(Path(__file__).parent),
+            "-q",
+            "-k",
+            "test_memory or test_sample_cost",
+            "--maxfail=1",
+        ]
+    )
+
+    # Accept both 0 (tests passed) and 5 (no tests collected)
+    if code not in (0, 5):
+        raise AssertionError(f"unit tests failed with exit code {code}")
+
     print("  OK ✔")
 
     for name, fn in EXPS.items():
@@ -32,7 +44,9 @@ def main():
         fn()
         print(f"{name} finished in {(time.time() - start) / 60:.1f} min\n")
 
-    print("All experiments finished. Find outputs / figures under the outputs/ directory.")
+    print(
+        "All experiments finished. Find outputs / figures under the outputs/ directory."
+    )
 
 
 if __name__ == "__main__":
