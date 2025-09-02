@@ -1,0 +1,30 @@
+Generating train split:   0%|          | 0/4795 [00:00<?, ? examples/s]Generating train split:  46%|████▌     | 2200/4795 [00:00<00:00, 20974.05 examples/s]Generating train split:  96%|█████████▌| 4600/4795 [00:00<00:00, 22403.98 examples/s]Generating train split: 100%|██████████| 4795/4795 [00:00<00:00, 21972.06 examples/s]
+Generating validation split:   0%|          | 0/1199 [00:00<?, ? examples/s]Generating validation split: 100%|██████████| 1199/1199 [00:00<00:00, 21076.37 examples/s]
+Generating test split:   0%|          | 0/5794 [00:00<?, ? examples/s]Generating test split:  41%|████▏     | 2400/5794 [00:00<00:00, 23200.35 examples/s]Generating test split:  88%|████████▊ | 5100/5794 [00:00<00:00, 24905.24 examples/s]Generating test split: 100%|██████████| 5794/5794 [00:00<00:00, 25020.02 examples/s]
+Traceback (most recent call last):
+  File "/home/runner/work/_tool/Python/3.11.13/x64/lib/python3.11/site-packages/torchvision/datasets/utils.py", line 187, in download_file_from_google_drive
+    import gdown
+ModuleNotFoundError: No module named 'gdown'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/main.py", line 163, in <module>
+    main()
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/main.py", line 156, in main
+    experiment1()
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/main.py", line 44, in experiment1
+    celeba = prepare_celeba()
+             ^^^^^^^^^^^^^^^^
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/preprocess.py", line 78, in prepare_celeba
+    _ = tv.datasets.CelebA(root=str(root), split="all", download=True)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/_tool/Python/3.11.13/x64/lib/python3.11/site-packages/torchvision/datasets/celeba.py", line 85, in __init__
+    self.download()
+  File "/home/runner/work/_tool/Python/3.11.13/x64/lib/python3.11/site-packages/torchvision/datasets/celeba.py", line 160, in download
+    download_file_from_google_drive(file_id, os.path.join(self.root, self.base_folder), filename, md5)
+  File "/home/runner/work/_tool/Python/3.11.13/x64/lib/python3.11/site-packages/torchvision/datasets/utils.py", line 189, in download_file_from_google_drive
+    raise RuntimeError(
+RuntimeError: To download files from GDrive, 'gdown' is required. You can install it with 'pip install gdown'.
