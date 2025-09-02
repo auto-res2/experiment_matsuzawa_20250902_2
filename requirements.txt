@@ -1,19 +1,26 @@
 # ----------------------------------------------------------------------------
-# Python package requirements – revised (fixed build errors)
+# Python package requirements – fixed build errors for PyG extensions
 # ----------------------------------------------------------------------------
-# 1.  Torch 2.2.* is the newest stable release that already has pre-built
-#     CUDA 11.8 / CPU wheels for all torch-* extensions.  Staying on 2.3.0
-#     forced pip to compile the auxiliary packages from source, which failed
-#     because their build‐time isolation environment did not provide Torch.
-# 2.  torch_scatter 2.1.2 ships matching wheels for torch 2.2.*, so a source
-#     build (and the associated missing-torch error) is avoided.
+# We add a “find-links” directive that points pip to the official PyG wheel
+# repository hosting the pre-compiled CUDA 11.8 binaries that match
+#   * Python 3.11
+#   * torch 2.2.1 (pt22) 
+# This prevents pip from attempting an in-tree source build (which fails
+# because a full C/C++ tool-chain and the torch headers are missing in the
+# isolated build environment).
 # ----------------------------------------------------------------------------
+--find-links https://data.pyg.org/whl/torch-2.2.1+cu118.html
 
-torch==2.2.1              # stable, wheels for cp311/cu118 & cpu
-torch_geometric==2.5.0    # fully compatible with torch 2.2
-torch_scatter==2.1.2      # wheels available for torch 2.2
+# Core deep-learning stack ----------------------------------------------------
+torch==2.2.1              # cu118 wheels available for cp311
+pyg-lib==0.4.0            # low-level CUDA kernels used by PyG
+torch_scatter==2.1.2      # message-passing primitives
+torch_sparse==0.6.18      # sparse-matrix ops
+torch_cluster==1.6.3      # graph clustering utils
+torch_spline_conv==1.2.2  # spline-based convolutions
+torch_geometric==2.5.0    # high-level GNN library
 
-# Scientific Python stack
+# Scientific Python stack -----------------------------------------------------
 numpy
 scipy
 pandas
