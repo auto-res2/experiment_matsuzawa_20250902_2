@@ -60,13 +60,28 @@ def offline_sanity(seed: int = 0, epochs: int = 1):
 
     set_seed(seed)
     model = ResNet18(100).to(DEVICE)
+
+    # ------------------------------------------------------------------
+    # IMPORTANT – keep the powerful ImageNet representation intact.
+    # Training the entire backbone with a very high learning-rate (0.1)
+    # for only a single epoch quickly destroys the useful features and
+    # leads to poor accuracy (~50 %).  We therefore **freeze** the
+    # backbone and only train the task-specific classifier during this
+    # quick sanity-check.  The main continual-learning experiments still
+    # fine-tune the whole network because they instantiate a *new* model.
+    # ------------------------------------------------------------------
+    for p in model.backbone.parameters():
+        p.requires_grad = False
+
     tr_loader = DataLoader(
         datasets.CIFAR100(DATA_DIR, True, download=True, transform=TRAIN_TF),
         batch_size=128,
         shuffle=True,
         num_workers=4,
     )
-    opt = optim.SGD(model.parameters(), 0.1, momentum=0.9, weight_decay=1e-4)
+    # Optimise *only* the classifier parameters ------------------------
+    opt = optim.SGD(model.classifier.parameters(), 0.1, momentum=0.9, weight_decay=1e-4)
+
     for _ in range(epochs):
         for x, y in tr_loader:
             x = x.to(DEVICE)
@@ -75,6 +90,7 @@ def offline_sanity(seed: int = 0, epochs: int = 1):
             nn_loss = torch.nn.functional.cross_entropy(model(x), y)
             nn_loss.backward()
             opt.step()
+
     te_loader = DataLoader(
         datasets.CIFAR100(DATA_DIR, False, download=True, transform=TEST_TF),
         batch_size=256,
