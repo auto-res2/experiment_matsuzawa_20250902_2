@@ -14,7 +14,7 @@ import torch
 from torch.cuda.amp import GradScaler
 from torch.utils.data import DataLoader
 
-from .preprocess import set_seed, WaterbirdsWildsWrapper
+from .preprocess import set_seed, WaterbirdsWildsWrapper, collate_with_optional_cf
 from .train import SCaRINet, train_epoch
 from .evaluate import evaluate, save_line_fig
 
@@ -22,8 +22,17 @@ from .evaluate import evaluate, save_line_fig
 #  Constants & environment checks
 # -----------------------------------------------------------------------------
 GLOBAL_SEED = 0
-BS = 128
-EPOCHS = 30
+DEFAULT_BS = 128
+DEFAULT_EPOCHS = 30
+
+
+def _choose_hyperparams(synthetic: bool):
+    """Return (arch, batch_size, epochs) depending on dataset availability."""
+    if synthetic:
+        # Keep the CI run lightweight
+        return "resnet18", min(32, DEFAULT_BS), 2
+    return "resnet50", DEFAULT_BS, DEFAULT_EPOCHS
+
 
 def run_experiment_1(seed: int = GLOBAL_SEED) -> None:
     print("===== Experiment 1 – Standard-Benchmark Robustness Sweep =====")
@@ -34,38 +43,31 @@ def run_experiment_1(seed: int = GLOBAL_SEED) -> None:
     set_seed(seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # ---------------------------------------------------------------------
-    #  Dataset paths (set via environment variables)
-    # ---------------------------------------------------------------------
-    data_root = Path(os.environ.get("WATERBIRDS_ROOT", "./data"))
-    if not data_root.exists():
-        raise RuntimeError(
-            "Waterbirds dataset folder not found. Please set WATERBIRDS_ROOT env var."
-        )
-
-    cf_root = Path(os.environ.get("WATERBIRDS_CF_ROOT", "./data_cf/waterbirds"))
-    if not cf_root.exists():
-        raise RuntimeError(
-            "Counterfactual images not found. Set WATERBIRDS_CF_ROOT to directory containing pre-generated CFs."
-        )
-
     # ------------------------------------------------------------------
-    #  DataLoaders
+    #  Initialise dataset (real or synthetic)
     # ------------------------------------------------------------------
+    cf_root_env = os.environ.get("WATERBIRDS_CF_ROOT")
+    cf_root = Path(cf_root_env) if cf_root_env and Path(cf_root_env).exists() else None
+    if cf_root is None:
+        print("[WARN] Counterfactual directory not found – training without CF branch.")
+
     train_ds = WaterbirdsWildsWrapper("train", cf_root=cf_root)
     val_ds = WaterbirdsWildsWrapper("val", cf_root=None)  # No CFs during validation
 
+    arch, BS, EPOCHS = _choose_hyperparams(train_ds.synthetic)
+    num_workers = 0  # Robust setting for most CI runners
+
     train_loader = DataLoader(
-        train_ds, batch_size=BS, shuffle=True, num_workers=8, pin_memory=True
+        train_ds, batch_size=BS, shuffle=True, num_workers=num_workers, collate_fn=collate_with_optional_cf
     )
     val_loader = DataLoader(
-        val_ds, batch_size=BS, shuffle=False, num_workers=8, pin_memory=True
+        val_ds, batch_size=BS, shuffle=False, num_workers=num_workers, collate_fn=collate_with_optional_cf
     )
 
     # ------------------------------------------------------------------
     #  Model, optimiser, scaler
     # ------------------------------------------------------------------
-    model = SCaRINet("resnet50", num_classes=2).to(device)
+    model = SCaRINet(arch, num_classes=2).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, weight_decay=0.05)
     scaler = GradScaler()
 

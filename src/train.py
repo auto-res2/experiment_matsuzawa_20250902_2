@@ -40,6 +40,11 @@ class FeatureBackbone(nn.Module):
             self.feature_dim = net.fc.in_features  # type: ignore[attr-defined]
             net.fc = nn.Identity()
             self.backbone = net
+        elif arch == "resnet18":  # Lightweight option for CI / unit-tests
+            net = tv_models.resnet18(pretrained=pretrained)
+            self.feature_dim = net.fc.in_features  # type: ignore[attr-defined]
+            net.fc = nn.Identity()
+            self.backbone = net
         elif arch == "vit_base_patch16_224":
             net = timm.create_model("vit_base_patch16_224", pretrained=pretrained)
             self.feature_dim = net.head.in_features  # type: ignore[attr-defined]
@@ -79,8 +84,16 @@ class SCaRINet(nn.Module):
 # -----------------------------------------------------------------------------
 
 def mse_invariance(f_anchor: torch.Tensor, f_cf: torch.Tensor) -> torch.Tensor:
-    """Representation-level invariance loss (MSE)."""
-    return F.mse_loss(f_anchor.unsqueeze(1), f_cf)
+    """Representation-level invariance loss (MSE).
+
+    This implementation supports multiple counterfactuals (K) per anchor by
+    broadcasting the anchor along the K dimension and averaging the squared
+    error.
+    """
+
+    # f_anchor: (B, D) → (B, 1, D) so it can be broadcast against (B, K, D)
+    loss = ((f_anchor.unsqueeze(1) - f_cf) ** 2).mean()
+    return loss
 
 
 def instance_dro_weight(losses: torch.Tensor, eta: float = 0.2) -> torch.Tensor:
@@ -116,7 +129,8 @@ def train_epoch(
         # Unpack batch ---------------------------------------------------------
         x, y, _, cf_imgs = batch  # metadata not used
         x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
-        cf_imgs = cf_imgs.to(device, non_blocking=True) if cf_imgs is not None else None
+        if cf_imgs is not None:
+            cf_imgs = cf_imgs.to(device, non_blocking=True)
 
         optimizer.zero_grad(set_to_none=True)
 
