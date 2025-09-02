@@ -2,7 +2,7 @@
 evaluate.py – utilities for evaluation, statistics and plotting
 """
 from __future__ import annotations
-import itertools, random, sys
+import itertools, random, sys, os
 from typing import List
 
 import numpy as np
@@ -83,9 +83,10 @@ def _train_linear_probe(model: ResNet18, loader: DataLoader, seed: int):
 
     # Deterministic & fast linear classifier ---------------------------------------
     clf = LogisticRegression(
-        max_iter=1000,
+        max_iter=3000,               # ↑ allow solver to fully converge
         multi_class="multinomial",
         solver="lbfgs",
+        C=10.0,                      # ↓ weaker regularisation → higher accuracy
         random_state=seed,
         n_jobs=1,  # lightning-fast on 50k×512 ≈ 100 MB
     )
@@ -116,7 +117,15 @@ def offline_sanity(seed: int = 0, epochs: int = 1):
     for p in model.backbone.parameters():
         p.requires_grad = False
 
-    tr_loader = DataLoader(
+    # ------------------------------------------------------------------
+    # Note:  Random crops / flips in TRAIN_TF noticeably hurt linear-probe
+    # performance because the *feature* distribution differs from the
+    # centre-cropped test data.  For the deterministic 1-epoch path we
+    # therefore build a *second* DataLoader that uses TEST_TF (no random
+    # data augmentation) while keeping the original TRAIN_TF loader for the
+    # SGD branch (epochs>1).
+    # ------------------------------------------------------------------
+    tr_loader_aug = DataLoader(
         datasets.CIFAR100(DATA_DIR, True, download=True, transform=TRAIN_TF),
         batch_size=128,
         shuffle=True,
@@ -125,17 +134,24 @@ def offline_sanity(seed: int = 0, epochs: int = 1):
     )
 
     if epochs == 1:
+        tr_loader_deterministic = DataLoader(
+            datasets.CIFAR100(DATA_DIR, True, download=True, transform=TEST_TF),
+            batch_size=256,
+            shuffle=False,
+            num_workers=4,
+            pin_memory=True,
+        )
         # ------------------------------------------------------------------
         # Fast linear probe – deterministic and highly accurate
         # ------------------------------------------------------------------
-        _train_linear_probe(model, tr_loader, seed)
+        _train_linear_probe(model, tr_loader_deterministic, seed)
     else:
         # ------------------------------------------------------------------
         # Original (slower) SGD loop for thorough training
         # ------------------------------------------------------------------
         opt = optim.SGD(model.classifier.parameters(), 0.1, momentum=0.9, weight_decay=1e-4)
         for _ in range(epochs):
-            for x, y in tr_loader:
+            for x, y in tr_loader_aug:
                 x = x.to(DEVICE)
                 y = y.to(DEVICE)
                 opt.zero_grad()
