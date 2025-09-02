@@ -133,10 +133,20 @@ class HOFQBuffer:
 
     # ------------------------------------------------------------------
     def _encode(self, feat: torch.Tensor) -> Tuple[int, int]:
+        """Quantise a single feature vector into two hierarchical codes.
+
+        The incoming feature may reside on CPU (it is stored that way to save
+        GPU memory).  Distances, however, are computed against GPU-resident
+        code-books, so we move the feature to the correct device first.
+        """
+        if feat.device != self.device:
+            feat = feat.to(self.device, non_blocking=self.device.type == "cuda")
+
         # Stage-1: coarse index
         dist0 = torch.cdist(feat.unsqueeze(0), self.c0)[0]
         idx0 = int(dist0.argmin())
         residual = feat - self.c0[idx0]
+
         # Stage-2: task-specific residual code-book
         ct = self.residual_books[-1]
         if ct.abs().sum() == 0:  # lazy random warm-start
