@@ -10,7 +10,7 @@ from __future__ import annotations
 
 # --------------------------- std-lib -------------------------------
 import textwrap
-from typing import List
+from typing import List, Dict, Any
 
 # -------------------------- third-party ----------------------------
 import pandas as pd
@@ -36,6 +36,34 @@ from .train import (
     RawRingBuffer,
     train_experience_replay,
 )
+
+# ------------------------------------------------------------------
+#  Helper – robust metric extraction (Avalanche API changed over time)
+# ------------------------------------------------------------------
+
+def _find_metric(metrics: Dict[str, Any], name_substr: str) -> float:
+    """Return the first metric whose key contains *name_substr* (case-insensitive).
+
+    The Avalanche metric naming scheme changed between versions.  To
+    remain compatible across releases we therefore search for the key
+    at runtime instead of hard-coding the full string.  Preference is
+    given to metrics collected during the *eval* phase when multiple
+    matches exist.
+    """
+
+    # Sort keys to ensure deterministic retrieval order
+    keys = sorted(metrics.keys())
+    preferred, fallback = None, None
+    for k in keys:
+        if name_substr.lower() in k.lower():
+            if "/eval" in k or "eval_phase" in k:
+                preferred = k
+            else:
+                fallback = k if fallback is None else fallback
+    key = preferred or fallback
+    if key is None:
+        raise KeyError(f"Metric containing '{name_substr}' not found. Available keys: {list(metrics)}")
+    return float(metrics[key])
 
 
 # ==================================================================
@@ -101,12 +129,16 @@ def run_experiment_1():
                 lr=0.1,
             )
 
-            final_acc = res[-1]["Top1_Accuracy_Stream/eval"] * 100
-            final_forget = res[-1]["StreamForgetfulness/eval"]
+            # ------------------------------------------------------
+            # Robustly extract final average accuracy & forgetting
+            # ------------------------------------------------------
+            final_metrics = res[-1]
+            final_acc = _find_metric(final_metrics, "Top1_Accuracy_Stream") * 100.0
+            final_forget = _find_metric(final_metrics, "StreamForgetfulness")
 
             print(
                 f"Budget {budget} kB | {method} → Final Acc = {final_acc:.2f} % | "
-                f"Avg Forget = {final_forget:.2f}"
+                f"Avg Forget = {final_forget:.4f}"
             )
             all_records.append(
                 {
