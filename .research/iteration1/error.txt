@@ -1,0 +1,3 @@
+usage: HARD diffusion experiments [-h] --exp {1,2,3} [--output_dir OUTPUT_DIR]
+                                  [--prompt_json PROMPT_JSON]
+HARD diffusion experiments: error: the following arguments are required: --exp
