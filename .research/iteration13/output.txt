@@ -1,0 +1,6 @@
+=== pip install start Tue Sep  2 15:19:58 UTC 2025 ===
+Collecting torch==2.2.1 (from -r requirements.txt (line 12))
+  Downloading torch-2.2.1-cp311-cp311-manylinux1_x86_64.whl.metadata (26 kB)
+Collecting torch_geometric==2.5.0 (from -r requirements.txt (line 13))
+  Using cached torch_geometric-2.5.0-py3-none-any.whl.metadata (64 kB)
+=== experiment start Tue Sep  2 15:19:59 UTC 2025 ===
