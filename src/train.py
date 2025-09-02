@@ -1,151 +1,130 @@
 """src/train.py
-Training-related utilities: seed control, model construction, flash conversion
-and the generic epoch runner.
+All routines that deal with model construction and training.
 """
 from __future__ import annotations
-
 import random, time
-import warnings  # NEW – for graceful fallback messaging
-from typing import List
+from typing import Tuple, Callable
 
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F  # noqa: F401  (many models use F internally)
-import timm  # Vision-Mamba checkpoints (or fallback models)
+import torch.nn.functional as F  # noqa: F401  (kept for potential future use)
+import timm
 
-# ----------------------------------------------------------------------------------
-#  Reproducibility helpers
-# ----------------------------------------------------------------------------------
-SEEDS: List[int] = [0, 1, 2, 3]
+# -----------------------------------------------------------------------------
+# GLOBAL CONSTANTS -------------------------------------------------------------
+# These are imported by other modules, therefore keep them here to avoid a
+# circular-import maze.
+# -----------------------------------------------------------------------------
+SEEDS = [0, 1, 2, 3]
+BF16_ENABLED = torch.cuda.is_available()
+BASELINE_NAME = "vmamba_tiny_patch16_224"   # timm id
+
+# -----------------------------------------------------------------------------
+# 0.  REPRODUCIBILITY HELPERS --------------------------------------------------
+# -----------------------------------------------------------------------------
 
 def set_seed(seed: int) -> None:
-    """Seed Python, NumPy and Torch (CPU + optional CUDA)."""
+    """Set RNG seeds for python, numpy and torch (CPU / CUDA)."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
-# ----------------------------------------------------------------------------------
-#  Model construction and Flash-SSM conversion  (simulated via checkpoint + reversible)
-# ----------------------------------------------------------------------------------
-BASELINE_NAME: str = "vmamba_tiny_patch16_224"  # Desired architecture (may be unavailable)
+# 95 % confidence interval helper (imported by evaluate)
+ci95 = lambda x: (np.mean(x), 1.96 * np.std(x, ddof=1) / np.sqrt(len(x))) if len(x) > 1 else (x[0], 0.0)
 
+# -----------------------------------------------------------------------------
+# 1.  MEMORY-UTILITY -----------------------------------------------------------
+# -----------------------------------------------------------------------------
 
-def _create_model(name: str) -> nn.Module:
-    """Helper that always requests 1000 output classes so that losses / accuracies
-    stay comparable across fallback architectures.
-    """
-    return timm.create_model(name, pretrained=False, num_classes=1000)
+def peak_ram_gb() -> float:
+    """Return *peak* GPU memory (in GB) measured so far on the active CUDA device."""
+    if not torch.cuda.is_available():
+        return 0.0
+    torch.cuda.synchronize()
+    return torch.cuda.max_memory_allocated() / 1024 ** 3
 
-
-def load_baseline() -> nn.Module:
-    """Return the Vision-Mamba Tiny model if the installed timm version supports it.
-
-    Public CI environments frequently pin older timm wheels that do not yet ship
-    Vision-Mamba.  In that case we fall back to a lightweight ResNet-18 so that
-    the remainder of the experimental pipeline continues to run.  This **does not**
-    preserve scientific equivalence of the results but keeps the code functional
-    and prevents hard dependency failures during automated grading.
-    """
-    try:
-        return _create_model(BASELINE_NAME)
-    except RuntimeError as err:
-        if "Unknown model" not in str(err):
-            # An unrelated error occurred – surface it.
-            raise
-
-        # ------------------------------------------------------------------
-        # Graceful degradation path
-        # ------------------------------------------------------------------
-        fallback = "resnet18"
-        warnings.warn(
-            (
-                f"Model '{BASELINE_NAME}' is unavailable in the installed timm "
-                f"({timm.__version__}). Falling back to '{fallback}'.\n"
-                "NOTE: The numerical results from the experiments will *not* "
-                "match those reported in the paper when a fallback model is "
-                "used. The substitution only exists so that the codebase "
-                "remains executable in minimal CI environments."
-            ),
-            RuntimeWarning,
-        )
-        return _create_model(fallback)
-
-
+# -----------------------------------------------------------------------------
+# 2.  MODEL BUILDERS -----------------------------------------------------------
+# -----------------------------------------------------------------------------
 class FlashWrapper(nn.Module):
-    """Wrap a module with `torch.utils.checkpoint` in window chunks to emulate
-    Flash-SSM's chunked prefix scan + recompute strategy.
+    """A very small wrapper that mimics the proposed Flash-SSM chunking strategy.
+    It uses `torch.utils.checkpoint` to drop activations outside a window of
+    size `self.chunk`.
     """
 
-    def __init__(self, mod: nn.Module, chunk: int):
+    def __init__(self, blk: nn.Module, chunk: int):
         super().__init__()
-        self.mod = mod
+        self.blk = blk
         self.chunk = chunk
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
-        B, L, C = x.shape  # noqa: N806  (keep original variable names)
-        if L <= self.chunk:
-            return torch.utils.checkpoint.checkpoint(self.mod, x)
-        out: list[torch.Tensor] = []
-        for s in range(0, L, self.chunk):
-            out.append(
-                torch.utils.checkpoint.checkpoint(self.mod, x[:, s : s + self.chunk])
-            )
-        return torch.cat(out, dim=1)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # type: ignore
+        if x.shape[1] <= self.chunk:
+            return torch.utils.checkpoint.checkpoint(self.blk, x)
+        pieces = []
+        for s in range(0, x.shape[1], self.chunk):
+            pieces.append(torch.utils.checkpoint.checkpoint(self.blk, x[:, s : s + self.chunk]))
+        return torch.cat(pieces, 1)
 
 
-def convert_to_flash(model: nn.Module, chunk: int = 256) -> nn.Module:
-    """Recursively replace the Selective-Scan mixer in each Vision-Mamba block
-    by a `FlashWrapper` that performs chunked recomputation. If the provided
-    model lacks a `mixer` attribute (e.g. the ResNet-18 fallback), the function
-    becomes a no-op and simply returns the original module tree.
+def _convert_flash(model: nn.Module, chunk: int = 256) -> nn.Module:
+    """Recursively replace the *mixer* inside each VMamba block with a memory
+    efficient `FlashWrapper`.
     """
-    for name, m in model.named_children():  # noqa: B018  (need both vars)
-        # Dive into nested containers first
-        if hasattr(m, "body"):
-            convert_to_flash(m, chunk)
-        elif isinstance(m, nn.ModuleList):
-            for blk in m:
+
+    for _name, module in model.named_children():
+        if isinstance(module, nn.ModuleList):
+            for i, blk in enumerate(module):
                 if hasattr(blk, "mixer"):
                     blk.mixer = FlashWrapper(blk.mixer, chunk)
-        else:
-            convert_to_flash(m, chunk)
+        _convert_flash(module, chunk)
     return model
 
-# ----------------------------------------------------------------------------------
-#  Training loop – single epoch (optimiser passed from caller)
-# ----------------------------------------------------------------------------------
 
-def run_epoch(model: nn.Module, loader, opt=None):
-    """Run one epoch. If `opt` is provided, training mode is enabled and the
-    optimiser is stepped, otherwise the model is evaluated only.
-    Returns:
-        top-1 accuracy (%)
-        images/second throughput
+def build_model(impl: str = "baseline", chunk: int = 256) -> nn.Module:
+    """Factory that returns either the *baseline* VMamba model or the *flash*
+    variant with chunked scan.
     """
-    device = next(model.parameters()).device
+
+    model = timm.create_model(BASELINE_NAME, pretrained=False)
+    if impl == "flash":
+        model = _convert_flash(model, chunk)
+    return model
+
+# -----------------------------------------------------------------------------
+# 3.  TRAINING LOOP ------------------------------------------------------------
+# -----------------------------------------------------------------------------
+
+def train_one_epoch(
+    model: nn.Module,
+    loader: torch.utils.data.DataLoader,  # type: ignore
+    optimiser: torch.optim.Optimizer,
+    scaler: torch.cuda.amp.GradScaler,
+    epoch: int,
+    total_epochs: int,
+    log_mid: int = 150,
+) -> float:
+    """Perform one training epoch and return *mid-epoch* peak RAM (GB)."""
+
     criterion = nn.CrossEntropyLoss()
-    model.train() if opt else model.eval()
+    model.train()
+    batches = len(loader)
+    torch.cuda.reset_peak_memory_stats()
 
-    hits, tot = 0, 0
-    t0 = time.time()
-
-    for img, tgt in loader:
-        img, tgt = img.to(device, non_blocking=True), tgt.to(device, non_blocking=True)
-        out = model(img)
-
-        if opt is not None:
+    mid_peak = 0.0
+    for i, (img, tgt) in enumerate(loader):
+        img = img.cuda(non_blocking=True)
+        tgt = tgt.cuda(non_blocking=True)
+        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=BF16_ENABLED):
+            out = model(img)
             loss = criterion(out, tgt)
-            opt.zero_grad(set_to_none=True)
-            loss.backward()
-            opt.step()
+        scaler.scale(loss).backward()
+        scaler.step(optimiser)
+        scaler.update()
+        optimiser.zero_grad(set_to_none=True)
 
-        pred = out.argmax(1)
-        hits += (pred == tgt).sum().item()
-        tot += tgt.size(0)
-
-    if torch.cuda.is_available():  # ensure kernels finished before timing
-        torch.cuda.synchronize()
-    return 100.0 * hits / tot, len(loader.dataset) / (time.time() - t0)
+        if i == log_mid:
+            mid_peak = peak_ram_gb()
+    return mid_peak

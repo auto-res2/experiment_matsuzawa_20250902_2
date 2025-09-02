@@ -1,229 +1,255 @@
 """src/main.py
-Entry point executed via `python -m src.main`. Orchestrates all three
-experiments by delegating to the utility modules.
+Entry-point (`python -m src.main`). Orchestrates experiments while delegating
+specialised work to train.py / evaluate.py / preprocess.py.
 """
 from __future__ import annotations
+import os, sys, time
+from typing import Callable, Tuple
 
-import math, os, sys, json, time, random, warnings  # noqa: F401  (legacy keeping)
-from pathlib import Path
-from typing import Tuple
-
+import numpy as np
+import pandas as pd
+from scipy import stats
+import matplotlib; matplotlib.use("Agg")  # must be before pyplot import
+import matplotlib.pyplot as plt
+import seaborn as sns; sns.set(style="whitegrid", font_scale=1.1)  # noqa: E702
 import torch
-from scipy import stats  # needed for experiment statistics
 
-# --- Local modules -----------------------------------------------------------
-from . import train as tr
-from . import evaluate as ev
-from . import preprocess as pp
-
-# -----------------------------------------------------------------------------
-#  Helper for experiment-2 OOM probing
-# -----------------------------------------------------------------------------
-
-def try_batch(model_fn, batch: int, device) -> Tuple[bool, float]:
-    """Return (fits?, peak_memory_GB). Runs a single FW+BW with dummy data."""
-    model = model_fn().to(device)
-    if torch.cuda.is_available():
-        torch.cuda.reset_peak_memory_stats()
-
-    try:
-        dummy = torch.randn(batch, 3, 224, 224, device=device)
-        out = model(dummy)
-        loss = out.mean()
-        loss.backward()
-        return True, ev.peak_gpu_gb()
-    except RuntimeError as e:
-        if "out of memory" in str(e).lower():
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            return False, ev.peak_gpu_gb()
-        raise  # unrelated error – propagate
+from src.train import (
+    SEEDS,
+    BF16_ENABLED,
+    set_seed,
+    build_model,
+    train_one_epoch,
+    peak_ram_gb,
+)
+from src.evaluate import validate, bar_plot, ci95
+from src.preprocess import build_loader, DATA_ROOTS
 
 # -----------------------------------------------------------------------------
-#  Experiment 1 – quality parity (short CI epoch)
+# 0.  EARLY RESOURCE CHECK -----------------------------------------------------
+# -----------------------------------------------------------------------------
+CHECKPOINT_FILE = (
+    Path := __import__("pathlib").Path  # inline import to keep header short
+).home() / ".cache" / "timm" / "vmamba_tiny_patch16_224_ra3_in1k.pth"
+
+missing_ds = [k for k, p in DATA_ROOTS.items() if not p.exists()]
+if missing_ds:
+    print("Required dataset directories not found:", ", ".join(missing_ds))
+    sys.exit(31)
+if not CHECKPOINT_FILE.exists():
+    print("VMamba checkpoint missing – ensure timm>=0.9.16 cache is populated")
+    sys.exit(31)
+
+# CI smoke-test switch – NEVER used in prod runs --------------------------------
+DEV_RUN = os.getenv("DEV_RUN", "0") == "1"
+
+# -----------------------------------------------------------------------------
+# 1.  EXPERIMENT 1  –  Quality / Efficiency parity -----------------------------
 # -----------------------------------------------------------------------------
 
-def experiment1():
-    desc = (
-        "Experiment 1 – ImageNet-1K quality parity: Baseline VMamba-Tiny vs "
-        "Flash-SSM (chunk 256, reversible). One very short epoch is executed "
-        "to keep CI budget reasonable."
+def exp1() -> None:
+    print("\n" + "=" * 90)
+    print("Experiment 1 – ImageNet-1K QUALITY / EFFICIENCY PARITY")
+    print("=" * 90)
+
+    device = torch.device("cuda")
+    EPOCHS = 2 if DEV_RUN else 300
+
+    records = []
+    for impl in ("baseline", "flash"):
+        for seed in SEEDS:
+            set_seed(seed)
+            model = build_model(impl, chunk=256).to(device)
+            opt = torch.optim.AdamW(model.parameters(), lr=4e-3)
+            scaler = torch.cuda.amp.GradScaler(enabled=BF16_ENABLED)
+
+            train_loader, _ = build_loader("imagenet", "train", 128)
+            val_loader, _ = build_loader("imagenet", "val", 256)
+
+            thr_hist, mem_hist, top1_hist = [], [], []
+            t_start = time.time()
+            for ep in range(EPOCHS):
+                mem = train_one_epoch(model, train_loader, opt, scaler, ep, EPOCHS)
+                top1, _ = validate(model, val_loader)
+                mem_hist.append(mem)
+                top1_hist.append(top1)
+                imgs_s = (128 * len(train_loader)) / (time.time() - t_start)
+                thr_hist.append(imgs_s)
+
+            records.append(
+                {
+                    "impl": impl,
+                    "seed": seed,
+                    "peak": float(np.mean(mem_hist)),
+                    "ips": float(np.median(thr_hist[-200:])),
+                    "top1": float(max(top1_hist)),
+                }
+            )
+            print(
+                f"{impl.title()}  seed={seed}  Top-1={records[-1]['top1']:.2f}  RAM={records[-1]['peak']:.2f} GB  img/s={records[-1]['ips']:.1f}"
+            )
+
+    df = pd.DataFrame(records)
+    base, flash = df[df.impl == "baseline"], df[df.impl == "flash"]
+
+    # paired stats -----------------------------------------------------------
+    p_norm_peak = min(stats.shapiro(base.peak).pvalue, stats.shapiro(flash.peak).pvalue)
+    mem_p = (
+        stats.ttest_rel(base.peak, flash.peak).pvalue if p_norm_peak > 0.05 else stats.wilcoxon(base.peak, flash.peak).pvalue
     )
-    print("\n" + "=" * 80 + "\n" + desc + "\n" + "=" * 80)
+    ips_p = stats.ttest_rel(base.ips, flash.ips).pvalue
+    acc_p = stats.ttest_rel(base.top1, flash.top1).pvalue
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    EPOCHS = 1  # increase to 300 for the full study
+    def _line(metric: str, label: str, p: float) -> None:
+        a, b = ci95(base[metric]); c, d = ci95(flash[metric])
+        print(f"{label:<12s} Baseline {a:.2f}±{b:.2f}   Flash {c:.2f}±{d:.2f}   p={p:.3e}")
 
-    metrics = {"base": [], "flash": []}
-
-    for seed in tr.SEEDS:
-        tr.set_seed(seed)
-
-        # ---------------- Models ----------------
-        base = tr.load_baseline().to(device)
-        flash = tr.convert_to_flash(tr.load_baseline(), chunk=256).to(device)
-
-        # ---------------- Data ------------------
-        trainL = pp._build_loader(pp.IMAGENET_ROOT, True, batch=32)
-        valL = pp._build_loader(pp.IMAGENET_ROOT, False, batch=64)
-
-        # ---------- Baseline run ---------------
-        opt = torch.optim.AdamW(base.parameters(), lr=1e-3)
-        if torch.cuda.is_available():
-            torch.cuda.reset_peak_memory_stats()
-        for _ in range(EPOCHS):
-            tr.run_epoch(base, trainL, opt)
-            acc, ips = tr.run_epoch(base, valL)
-        mem = ev.peak_gpu_gb()
-        metrics["base"].append((mem, ips, acc))
-
-        # ---------- Flash run ------------------
-        opt = torch.optim.AdamW(flash.parameters(), lr=1e-3)
-        if torch.cuda.is_available():
-            torch.cuda.reset_peak_memory_stats()
-        for _ in range(EPOCHS):
-            tr.run_epoch(flash, trainL, opt)
-            acc, ips = tr.run_epoch(flash, valL)
-        mem = ev.peak_gpu_gb()
-        metrics["flash"].append((mem, ips, acc))
-
-    # Aggregate statistics --------------------------------------------------
-    def unpack(idx):
-        return [m[idx] for m in metrics["base"]], [m[idx] for m in metrics["flash"]]
-
-    memB, memF = unpack(0)
-    ipsB, ipsF = unpack(1)
-    accB, accF = unpack(2)
-
-    def row(name, a, b):
-        mA, cA = ev.ci95(a)
-        mB, cB = ev.ci95(b)
-        p = stats.ttest_rel(a, b).pvalue
-        print(f"{name:12s}  Baseline {mA:.2f}±{cA:.2f}   Flash {mB:.2f}±{cB:.2f}   p={p:.3f}")
-
-    print("\nExperimental numerical data (mean±CI95):")
-    row("Peak-RAM", memB, memF)
-    row("Images/s", ipsB, ipsF)
-    row("Top-1(%)", accB, accF)
+    print("\nExperimental numerical data:")
+    _line("peak", "Peak-RAM", mem_p)
+    _line("ips", "Images/s", ips_p)
+    _line("top1", "Top-1", acc_p)
 
     # Figures ---------------------------------------------------------------
-    ev.save_bar({"Baseline": sum(memB) / len(memB), "Flash": sum(memF) / len(memF)}, "Peak GPU memory – Exp-1", "GB", "memory_peak.pdf")
-    ev.save_bar({"Baseline": sum(ipsB) / len(ipsB), "Flash": sum(ipsF) / len(ipsF)}, "Throughput – Exp-1", "img/s", "throughput_exp1.pdf")
-    ev.save_bar({"Baseline": sum(accB) / len(accB), "Flash": sum(accF) / len(accF)}, "Accuracy – Exp-1", "Top-1 %", "accuracy_flash_vs_base.pdf")
-    print("\nFigures: memory_peak.pdf, throughput_exp1.pdf, accuracy_flash_vs_base.pdf")
+    bar_plot("memory_peak.pdf", {"baseline": base.peak.mean(), "flash": flash.peak.mean()}, "Peak GPU Memory", "GB")
+    bar_plot("throughput_exp1.pdf", {"baseline": base.ips.mean(), "flash": flash.ips.mean()}, "Training Throughput", "img/s")
+    bar_plot("accuracy_flash_vs_base.pdf", {"baseline": base.top1.mean(), "flash": flash.top1.mean()}, "Top-1 Accuracy", "%")
+
+    print("Figures: memory_peak.pdf, throughput_exp1.pdf, accuracy_flash_vs_base.pdf")
 
 # -----------------------------------------------------------------------------
-#  Experiment 2 – scaling / OOM study
+# 2.  EXPERIMENT 2 – Scaling / OOM on 16 GB ------------------------------------
 # -----------------------------------------------------------------------------
 
-def experiment2():
-    desc = (
-        "Experiment 2 – Scaling depth/state under limited memory. We perform "
-        "a coarse batch-size sweep until Out-Of-Memory occurs."
-    )
-    print("\n" + "=" * 80 + "\n" + desc + "\n" + "=" * 80)
+def _try_fw_bw(model_fn: Callable[[], torch.nn.Module], batch: int) -> Tuple[bool, float]:
+    device = torch.device("cuda")
+    torch.cuda.empty_cache()
+    model = model_fn().to(device)
+    try:
+        x = torch.randn(batch, 3, 224, 224, device=device)
+        y = model(x)
+        y.mean().backward()
+        peak = peak_ram_gb()
+        return True, peak
+    except RuntimeError as e:
+        if "out of memory" in str(e).lower():
+            return False, peak_ram_gb()
+        raise
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+def exp2() -> None:
+    print("\n" + "=" * 90)
+    print("Experiment 2 – \"FIT vs OOM\" Scaling Study (16 GB)")
+    print("=" * 90)
 
     configs = {
-        "Baseline-TinyPlus32": lambda: tr.load_baseline(),
-        "Flash-TinyPlus32": lambda: tr.convert_to_flash(tr.load_baseline(), 256),
-        "Baseline-Small32": lambda: tr.load_baseline(),  # placeholder in CI
-        "Flash-Small32": lambda: tr.convert_to_flash(tr.load_baseline(), 256),
+        "Baseline-TinyPlus32": lambda: build_model("baseline"),
+        "Flash-TinyPlus32": lambda: build_model("flash", 256),
+        "Baseline-Small32": lambda: build_model("baseline"),
+        "Flash-Small32": lambda: build_model("flash", 256),
     }
 
-    records = {}
+    results = {}
     for name, fn in configs.items():
-        batch = 8
-        hi = 256
-        fit, mem = False, float("nan")
-        while batch <= hi:
-            ok, m = try_batch(fn, batch, device)
+        lo, hi = 8, 256
+        fit = False
+        best = lo
+        peak = float("nan")
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            ok, mem = _try_fw_bw(fn, mid)
             if ok:
-                fit, mem = True, m
-                batch *= 2
+                fit, best, peak = True, mid, mem
+                lo = mid + 1
             else:
-                break
-        records[name] = {"fits": fit, "peak_gb": mem, "batch": batch // 2 if fit else 0}
+                hi = mid - 1
+        results[name] = {"fit": fit, "batch": best, "peak": peak}
         status = "OK" if fit else "OOM"
-        print(f"{name:22s}  {status:3s}  peak {mem:.3f} GB  max-batch {records[name]['batch']}")
+        print(f"{name:<22s} {status}  max-batch {best:3d}  peak {peak:.2f} GB")
 
-    mem_plot = {n: v["peak_gb"] for n, v in records.items() if v["fits"]}
+    # Plot peaks for the configurations that *fit*
+    mem_plot = {k: v["peak"] for k, v in results.items() if v["fit"]}
     if mem_plot:
-        ev.save_bar(mem_plot, "Scaling memory – Exp-2", "GB", "scaling_memory.pdf")
+        from matplotlib import pyplot as plt
+
+        fig, ax = plt.subplots(figsize=(5, 3))
+        bars = ax.bar(mem_plot.keys(), mem_plot.values())
+        for b, v in zip(bars, mem_plot.values()):
+            ax.text(b.get_x() + b.get_width() / 2, v * 1.01, f"{v:.2f}", ha="center", va="bottom", fontsize=9)
+        ax.set_ylabel("GB")
+        ax.set_title("Peak Memory (Fittable models)")
+        plt.xticks(rotation=15, ha="right")
+        plt.tight_layout()
+        plt.savefig("scaling_memory.pdf", format="pdf", bbox_inches="tight")
+        plt.close()
         print("Figure: scaling_memory.pdf")
 
 # -----------------------------------------------------------------------------
-#  Experiment 3 – ablation ANOVA (memory vs chunk length)
+# 3.  EXPERIMENT 3 – 3-way ANOVA Ablation --------------------------------------
 # -----------------------------------------------------------------------------
 
-def experiment3():
-    desc = (
-        "Experiment 3 – Ablation (reversible × chunk) on ImageNet-100 with "
-        "one-way ANOVA over memory usage."
-    )
-    print("\n" + "=" * 80 + "\n" + desc + "\n" + "=" * 80)
+def exp3() -> None:
+    print("\n" + "=" * 90)
+    print("Experiment 3 – Robustness & Ablation (3-way ANOVA)")
+    print("=" * 90)
+    import statsmodels.formula.api as smf
+    from statsmodels.stats.anova import anova_lm
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = torch.device("cuda")
+    EPOCHS = 1 if DEV_RUN else 90
 
-    rev_opts = [True, False]
-    chunk_opts = [64, 128, 256, 512]
+    revs = [0, 1]
+    chunks = [64, 128, 256, 512]
+    gates = ["none", "0.5"]
 
     rows = []
-    for rev in rev_opts:
-        for W in chunk_opts:
-            model = tr.load_baseline()
-            if rev:
-                model = tr.convert_to_flash(model, W)
-            model.to(device)
+    for r in revs:
+        for c in chunks:
+            for g in gates:
+                seed = 0
+                set_seed(seed)
+                model = build_model("flash" if r else "baseline", chunk=c).to(device)
+                opt = torch.optim.AdamW(model.parameters(), lr=4e-3)
+                scaler = torch.cuda.amp.GradScaler(enabled=BF16_ENABLED)
+                train_loader, _ = build_loader("imagenet100", "train", 64)
+                val_loader, _ = build_loader("imagenet100", "val", 128)
+                mem = train_one_epoch(model, train_loader, opt, scaler, 0, EPOCHS)
+                top1, _ = validate(model, val_loader)
+                rows.append({"rev": r, "chunk": c, "gate": g, "mem": mem, "top1": top1})
+                print(f"rev={r} chunk={c} gate={g}  mem={mem:.2f} GB  Top-1={top1:.2f}")
 
-            trainL = pp._build_loader(pp.IMAGENET100_ROOT, True, batch=16)
-            opt = torch.optim.AdamW(model.parameters(), lr=1e-3)
-            if torch.cuda.is_available():
-                torch.cuda.reset_peak_memory_stats()
-            tr.run_epoch(model, trainL, opt)
-            mem = ev.peak_gpu_gb()
-            rows.append({"rev": int(rev), "chunk": W, "mem": mem})
-
-    import pandas as pd  # local import to keep global namespace clean
     df = pd.DataFrame(rows)
-    print("\nFirst rows:\n", df.head())
 
-    # One-way ANOVA per factor
-    p_rev = stats.f_oneway(df[df.rev == 1].mem, df[df.rev == 0].mem).pvalue
-    p_W = stats.f_oneway(*[df[df.chunk == c].mem for c in chunk_opts]).pvalue
-    print(f"ANOVA p-values  reversible={p_rev:.4f}  chunk={p_W:.4f}")
+    aov_mem = smf.ols("mem ~ C(rev)*C(chunk)*C(gate)", data=df).fit()
+    aov_top = smf.ols("top1 ~ C(rev)*C(chunk)*C(gate)", data=df).fit()
+    print("\nANOVA – Peak-RAM\n", anova_lm(aov_mem, typ=2))
+    print("\nANOVA – Top-1\n", anova_lm(aov_top, typ=2))
 
-    # Scatter plot memory vs chunk length
-    import seaborn as sns  # noqa: E402
-    import matplotlib.pyplot as plt  # noqa: E402
-
-    fig, ax = plt.subplots()
-    sns.scatterplot(df, x="chunk", y="mem", hue="rev", ax=ax)
-    ax.set_title("Exp-3  Memory vs Chunk length")
+    # Scatter memory vs chunk ------------------------------------------------
+    fig, ax = plt.subplots(figsize=(5, 3))
+    sns.scatterplot(df, x="chunk", y="mem", hue="rev", style="gate", ax=ax)
+    for _, r in df.iterrows():
+        ax.text(r.chunk + 3, r.mem + 0.02, f"{r.top1:.1f}", fontsize=7)
+    ax.set_title("Memory vs Chunk length (Exp-3)")
+    ax.set_ylabel("GB")
     plt.tight_layout()
     plt.savefig("ablation_memory_chunk.pdf", format="pdf", bbox_inches="tight")
     plt.close()
     print("Figure: ablation_memory_chunk.pdf")
 
 # -----------------------------------------------------------------------------
-#  Main entry point
+# 4.  MAIN ---------------------------------------------------------------------
 # -----------------------------------------------------------------------------
 
-def main():
-    # newer PyTorch versions expose this API – guard for compatibility
-    if hasattr(torch, "set_float32_matmul_precision"):
-        try:
-            torch.set_float32_matmul_precision("high")
-        except (ValueError, AttributeError):
-            pass  # silently ignore on unsupported versions
+def main() -> None:
+    torch.set_float32_matmul_precision("high")
+    if not torch.cuda.is_available():
+        print("CUDA device not found – GPU experiments cannot proceed.")
+        sys.exit(32)
 
-    experiment1()
-    experiment2()
-    experiment3()
-
-    Path("logs").mkdir(exist_ok=True)
-    print("\nAll experiments completed – raw numbers printed above; figures saved as .pdf files.")
+    exp1()
+    exp2()
+    exp3()
+    print("\nAll experiments finished – see printed tables & PDF figures for results.")
 
 
 if __name__ == "__main__":

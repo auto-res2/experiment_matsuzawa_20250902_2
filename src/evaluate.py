@@ -1,72 +1,59 @@
 """src/evaluate.py
-Evaluation/analysis helpers: memory measurement, confidence intervals, plotting.
+Validation, statistics and simple plotting utilities.
 """
 from __future__ import annotations
-
-import warnings
-from pathlib import Path
-from typing import Dict, List
+from typing import Tuple, List
 
 import numpy as np
 import torch
+import seaborn as sns; sns.set(style="whitegrid", font_scale=1.1)  # noqa: E702
+import matplotlib; matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 from scipy import stats
 
-import matplotlib
+from src.train import BF16_ENABLED, ci95  # reuse globals from train
 
-# Headless backend so the code is CI-friendly
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-import seaborn as sns  # noqa: E402
+# -----------------------------------------------------------------------------
+# 1.  VALIDATION LOOP ----------------------------------------------------------
+# -----------------------------------------------------------------------------
 
-sns.set(style="whitegrid", font_scale=1.2)
+def validate(model: torch.nn.Module, loader: torch.utils.data.DataLoader) -> Tuple[float, float]:
+    """Return (Top-1 %, Top-5 %) accuracy on *loader*."""
 
-# ----------------------------------------------------------------------------------
-#  Low-level metrics helpers
-# ----------------------------------------------------------------------------------
+    model.eval()
+    hits1 = hits5 = total = 0
+    with torch.no_grad():
+        for img, tgt in loader:
+            img = img.cuda(non_blocking=True)
+            tgt = tgt.cuda(non_blocking=True)
+            with torch.autocast("cuda", dtype=torch.bfloat16, enabled=BF16_ENABLED):
+                out = model(img)
+            _, pred = out.topk(5, 1, True, True)
+            total += tgt.size(0)
+            hits1 += (pred[:, 0] == tgt).sum().item()
+            hits5 += (pred == tgt.view(-1, 1)).sum().item()
+    return hits1 / total * 100, hits5 / total * 100
 
-def peak_gpu_gb() -> float:
-    """Return the peak CUDA memory in GB since the last reset (or NaN on CPU)."""
-    if not torch.cuda.is_available():
-        return float("nan")
-    torch.cuda.synchronize()
-    mem = torch.cuda.max_memory_allocated()
-    return round(mem / 1024 ** 3, 3)
+# -----------------------------------------------------------------------------
+# 2.  GENERIC PLOTTING HELPERS -------------------------------------------------
+# -----------------------------------------------------------------------------
 
+def bar_plot(fname: str, data: dict, title: str, ylab: str) -> None:
+    """Create a 2-bar chart and write it to *fname* (PDF)."""
 
-def ci95(arr: List[float]):
-    """Mean and 95 % confidence interval of a list."""
-    if len(arr) == 0:
-        return float("nan"), float("nan")
-    m = np.mean(arr)
-    s = stats.sem(arr) if len(arr) > 1 else 0.0
-    return m, 1.96 * s
-
-# ----------------------------------------------------------------------------------
-#  Figure helpers
-# ----------------------------------------------------------------------------------
-
-def save_bar(data: Dict[str, float], title: str, ylabel: str, fname: str):
-    """Generate a simple labelled bar plot and store it as PDF."""
-    if not data:
-        warnings.warn("No data provided to save_bar(); figure will be skipped.")
-        return
-
-    sns.set_palette("Set2")
-    fig, ax = plt.subplots(figsize=(6, 4))
-    bars = ax.bar(data.keys(), data.values())
-    for bar, val in zip(bars, data.values()):
+    fig, ax = plt.subplots(figsize=(4, 3))
+    bars = ax.bar(data.keys(), data.values(), color=["#1f77b4", "#ff7f0e"])
+    for bar in bars:
         ax.text(
             bar.get_x() + bar.get_width() / 2,
-            val * 1.01,
-            f"{val:.2f}",
+            bar.get_height() * 1.01,
+            f"{bar.get_height():.2f}",
             ha="center",
             va="bottom",
             fontsize=9,
         )
-    ax.set_ylabel(ylabel)
+    ax.set_ylabel(ylab)
     ax.set_title(title)
     plt.tight_layout()
-
-    Path(fname).with_suffix("")  # ensure parent path valid (race-free)
-    plt.savefig(fname, bbox_inches="tight", format="pdf")
+    plt.savefig(fname, format="pdf", bbox_inches="tight")
     plt.close()
