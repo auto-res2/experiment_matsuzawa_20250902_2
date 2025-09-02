@@ -6,5 +6,82 @@
     "adversarial training robustness",
     "distributional robustness ImageNet",
     "corruption augmentation strategies"
+  ],
+  "research_study_list": [
+    {
+      "title": "MECTA: Memory-Economic Continual Test-Time Model Adaptation"
+    },
+    {
+      "title": "Visual Recognition with Deep Nearest Centroids"
+    },
+    {
+      "title": "Vector Quantization With Self-Attention for Quality-Independent Representation Learning"
+    },
+    {
+      "title": "Multisize Dataset Condensation"
+    },
+    {
+      "title": "Multisize Dataset Condensation"
+    },
+    {
+      "title": "Inverse Problems Leveraging Pre-trained Contrastive Representations"
+    },
+    {
+      "title": "Benchmarking and Analyzing Point Cloud Classification under Corruptions"
+    },
+    {
+      "title": "Benchmarking and Analyzing Point Cloud Classification under Corruptions"
+    },
+    {
+      "title": "Vector Quantization With Self-Attention for Quality-Independent Representation Learning"
+    },
+    {
+      "title": "Learning Deep Neural Networks under Agnostic Corrupted Supervision"
+    },
+    {
+      "title": "On Adversarial Training without Perturbing all Examples"
+    },
+    {
+      "title": "Phase Transition from Clean Training to Adversarial Training"
+    },
+    {
+      "title": "The Enemy of My Enemy Is My Friend: Exploring Inverse Adversaries for Improving Adversarial Training"
+    },
+    {
+      "title": "Robust Models are less Over-Confident"
+    },
+    {
+      "title": "Bag of Tricks for Adversarial Training"
+    },
+    {
+      "title": "Measuring Robustness to Natural Distribution Shifts in Image Classification"
+    },
+    {
+      "title": "BREEDS: Benchmarks for Subpopulation Shift"
+    },
+    {
+      "title": "Unexplored Faces of Robustness and Out-of-Distribution: Covariate Shifts in Environment and Sensor Domains"
+    },
+    {
+      "title": "Explicit Tradeoffs between Adversarial and Natural Distributional Robustness"
+    },
+    {
+      "title": "Contemplating Real-World Object Classification"
+    },
+    {
+      "title": "On Interaction Between Augmentations and Corruptions in Natural Corruption Robustness"
+    },
+    {
+      "title": "Improving robustness to corruptions with multiplicative weight perturbations"
+    },
+    {
+      "title": "Improving robustness against common corruptions by covariate shift adaptation"
+    },
+    {
+      "title": "Slight Corruption in Pre-training Data Makes Better Diffusion Models"
+    },
+    {
+      "title": "Benchmarking and Analyzing Point Cloud Classification under Corruptions"
+    }
   ]
 }
