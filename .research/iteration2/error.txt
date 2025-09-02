@@ -1,0 +1,4 @@
+s2_mamba package not found – falling back to DummyModel.
+usage: S²-Mamba Experiments (Tesla-T4) [-h] --experiment
+                                       {exp1,exp2a,exp2b,exp3} [--seed SEED]
+S²-Mamba Experiments (Tesla-T4): error: the following arguments are required: --experiment
