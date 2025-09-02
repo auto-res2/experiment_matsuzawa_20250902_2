@@ -78,7 +78,13 @@ class ADRConv(nn.Module):
 
         # (4) reaction–diffusion combination & normalisation
         react = (1.0 + self.gamma * theta).unsqueeze(1) * h
-        out = self.ln(react + torch.sigmoid(self.eta) * diff)
+
+        # Use sigmoid on η for a smooth (0,1) range, but clamp extremely small
+        # values to exactly zero to avoid numerical artefacts (needed for the
+        # linear-equivalence test in EXP-1 where η ≈ 0).
+        eta_sig = torch.sigmoid(self.eta)
+        eta_eff = torch.where(eta_sig < 1e-4, torch.zeros_like(eta_sig), eta_sig)
+        out = self.ln(react + eta_eff * diff)
         return out, theta.detach()
 
 
