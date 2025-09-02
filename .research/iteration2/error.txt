@@ -1,0 +1,24 @@
+  0%|          | 0.00/169M [00:00<?, ?B/s]  1%|          | 1.47M/169M [00:00<00:11, 14.7MB/s]  3%|▎         | 5.05M/169M [00:00<00:06, 26.8MB/s]  6%|▌         | 9.54M/169M [00:00<00:04, 34.9MB/s] 10%|▉         | 16.3M/169M [00:00<00:03, 47.6MB/s] 15%|█▌        | 25.7M/169M [00:00<00:02, 64.4MB/s] 21%|██▏       | 36.1M/169M [00:00<00:01, 77.9MB/s] 28%|██▊       | 47.1M/169M [00:00<00:01, 88.2MB/s] 34%|███▍      | 57.6M/169M [00:00<00:01, 93.4MB/s] 40%|████      | 68.3M/169M [00:00<00:01, 97.5MB/s] 46%|████▋     | 78.6M/169M [00:01<00:00, 99.2MB/s] 53%|█████▎    | 89.2M/169M [00:01<00:00, 101MB/s]  59%|█████▉    | 99.8M/169M [00:01<00:00, 103MB/s] 65%|██████▌   | 110M/169M [00:01<00:00, 102MB/s]  72%|███████▏  | 121M/169M [00:01<00:00, 105MB/s] 78%|███████▊  | 132M/169M [00:01<00:00, 104MB/s] 84%|████████▍ | 142M/169M [00:01<00:00, 105MB/s] 90%|█████████ | 153M/169M [00:01<00:00, 105MB/s] 97%|█████████▋| 163M/169M [00:01<00:00, 105MB/s]100%|██████████| 169M/169M [00:01<00:00, 90.7MB/s]
+/home/runner/work/_tool/Python/3.11.13/x64/lib/python3.11/site-packages/torchvision/models/_utils.py:208: UserWarning: The parameter 'pretrained' is deprecated since 0.13 and may be removed in the future, please use 'weights' instead.
+  warnings.warn(
+/home/runner/work/_tool/Python/3.11.13/x64/lib/python3.11/site-packages/torchvision/models/_utils.py:223: UserWarning: Arguments other than a weight enum or `None` for 'weights' are deprecated since 0.13 and may be removed in the future. The current behavior is equivalent to passing `weights=None`.
+  warnings.warn(msg)
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/main.py", line 129, in <module>
+    experiment1(device=device)
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/main.py", line 74, in experiment1
+    train_single_task(model, loader, optimizer, criterion, m_key, buffer, t, device=device)
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/train.py", line 200, in train_single_task
+    buffer.add(feats.detach().cpu())
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/train.py", line 154, in add
+    self.codes.append(self._encode(f.detach()))
+                      ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/train.py", line 137, in _encode
+    dist0 = torch.cdist(feat.unsqueeze(0), self.c0)[0]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/_tool/Python/3.11.13/x64/lib/python3.11/site-packages/torch/functional.py", line 1510, in cdist
+    return _VF.cdist(x1, x2, p, None)  # type: ignore[attr-defined]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: X1 and X2 must have the same device type. X1: cpu X2: cuda
