@@ -116,12 +116,32 @@ class WaterbirdsDataset(Dataset):
 
     def __init__(self, root: Path, split: str, transform):
         assert split in {"train", "val", "test"}
-        meta_file = root / "metadata.csv"
-        images_root = (
-            root / "waterbird_complete95_forest2water2" / "waterbird_complete95_forest2water2"
-        )
+
+        # ------------------------------------------------------------------
+        # The Waterbirds archive extracts to the following hierarchy:
+        #   <root>/
+        #       waterbird_complete95_forest2water2/        <- base_dir
+        #           metadata.csv
+        #           waterbird_complete95_forest2water2/     <- images_root
+        #               forest/
+        #               water/
+        # We therefore look for *metadata.csv* one level below `root`.
+        # ------------------------------------------------------------------
+        base_dir = root / "waterbird_complete95_forest2water2"
+        meta_file = base_dir / "metadata.csv"
+        images_root = base_dir / "waterbird_complete95_forest2water2"
+
+        # In case users manually move files around, fall back to a recursive
+        # search so that we do not crash hard but still warn.
         if not meta_file.exists():
-            raise FileNotFoundError("metadata.csv missing – check extraction.")
+            candidates = list(root.glob("**/metadata.csv"))
+            if len(candidates) == 1:
+                meta_file = candidates[0]
+                images_root = meta_file.parent / "waterbird_complete95_forest2water2"
+                print(f"[WaterbirdsDataset] Inferred metadata.csv at {meta_file}.")
+            else:
+                raise FileNotFoundError("metadata.csv missing – check extraction.")
+
         df = pd.read_csv(meta_file)
         split_map = {0: "train", 1: "val", 2: "test"}
         df = df[df.split.apply(lambda x: split_map[x] == split)].reset_index(drop=True)
