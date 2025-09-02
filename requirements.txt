@@ -1,17 +1,17 @@
 # ----------------------------------------------------------------------------
-# Python package requirements – revised
+# Python package requirements – revised (fixed build errors)
 # ----------------------------------------------------------------------------
-# Use the official wheels published on PyPI so that the solver can pick
-# the correct build (CPU-only or CUDA) for the running environment.
-# We therefore remove the explicit "+cpu" build tags that previously broke
-# the installation on Python 3.12 / CUDA-enabled runners.
+# 1.  Torch 2.2.* is the newest stable release that already has pre-built
+#     CUDA 11.8 / CPU wheels for all torch-* extensions.  Staying on 2.3.0
+#     forced pip to compile the auxiliary packages from source, which failed
+#     because their build‐time isolation environment did not provide Torch.
+# 2.  torch_scatter 2.1.4 ships matching wheels for torch 2.2.*, so a source
+#     build (and the associated missing-torch error) is avoided.
 # ----------------------------------------------------------------------------
 
-torch==2.3.0                 # automatically pulls the proper CUDA / CPU wheel
-torch_geometric==2.5.0        # compatible with PyTorch ≥2.2
-# Explicit pin so that the dependency resolver does not attempt a source build
-# (a pre-built wheel for the active Python / PyTorch combination is available).
-torch_scatter==2.1.2
+torch==2.2.1              # stable, wheels for cp311/cu118 & cpu
+torch_geometric==2.5.0    # fully compatible with torch 2.2
+torch_scatter==2.1.4      # wheels available for torch 2.2
 
 # Scientific Python stack
 numpy
