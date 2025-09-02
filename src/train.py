@@ -1,4 +1,3 @@
-````python
 """
 train.py – model architectures, memory buffers, training utilities
 """
@@ -209,4 +208,3 @@ def train_task(model: ResNet18, loader: torch.utils.data.DataLoader, opt: optim.
         # budget check ---------------------------------------------------------------
         if buf is not None:
             assert_memory(buf.bytes)
-````

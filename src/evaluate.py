@@ -1,4 +1,3 @@
-````python
 """
 evaluate.py – utilities for evaluation, statistics and plotting
 """
@@ -313,4 +312,3 @@ def experiment2():
 
 def experiment3():
     print("\nExp-3 stub running – compute/energy + ablation code is in the public repository.")
-````
