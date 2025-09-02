@@ -118,10 +118,23 @@ class FlashMambaBlock(nn.Module):
     """Flash-SSM block – chunked layer + reversible residual coupling."""
 
     def __init__(self, dim: int, chunk_len: int = 256):
+        """Construct the Flash-SSM block.
+
+        Important: because we split the feature dimension into two halves for a
+        reversible-style coupling, *all* sub-modules that operate on the second
+        half must be initialised with `dim // 2`.  The original implementation
+        erroneously used the full `dim`, which caused a LayerNorm shape mismatch
+        at runtime (received 64 channels while expecting 128).  This fix keeps
+        the public API unchanged while ensuring internal consistency.
+        """
         super().__init__()
+        if dim % 2 != 0:
+            raise ValueError("FlashMambaBlock requires `dim` to be even so it can be split 50/50.")
+        half_dim = dim // 2
+
         self.chunk_len = chunk_len
-        self.mamba = ChunkedMambaLayer(dim, chunk=chunk_len)
-        self.ln = nn.LayerNorm(dim)
+        self.mamba = ChunkedMambaLayer(half_dim, chunk=chunk_len)
+        self.ln = nn.LayerNorm(half_dim)
         # Lightweight mixing layer; avoids degeneration when using a reversible pattern
         self.mix = nn.Linear(dim, dim)
 
