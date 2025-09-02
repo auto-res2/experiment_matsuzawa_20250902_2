@@ -199,38 +199,71 @@ class BitPackBuffer:
 
 
 # =====================================================================
-#  Baseline: raw float32 image ring-buffer
+#  Baseline: raw image ring-buffer (float32 or uint8 depending on budget)
 # =====================================================================
 
 
 class RawRingBuffer:
-    """Stores raw float32 images in a ring, subject to memory budget."""
+    """Stores raw images in a ring subject to the given memory budget.
+
+    If the budget is large enough to fit at least *one* float32 image the
+    buffer will store float32 tensors (identical to the data seen by the
+    network).  Otherwise – provided that the budget is at least large
+    enough for a uint8 representation – it automatically falls back to
+    an 8-bit per-channel format.  Budgets smaller than one uint8 image
+    still raise ``ValueError`` because even a single sample would not fit.
+    """
 
     def __init__(self, img_shape: Tuple[int, ...], mem_budget_kb: int):
         self.img_shape = img_shape
-        self.bytes_per_sample = int(np.prod(img_shape) * 4)  # float32
-        self.mem_budget = mem_budget_kb * 1024
-        if self.mem_budget < self.bytes_per_sample:
+        c, h, w = img_shape
+        self.mem_budget = mem_budget_kb * 1024  # bytes
+
+        # memory footprint of a single sample for both candidate dtypes
+        bytes_float32 = int(c * h * w * 4)  # 4 bytes per float32
+        bytes_uint8 = int(c * h * w)        # 1 byte per uint8
+
+        # decide storage precision based on available budget
+        if self.mem_budget >= bytes_float32:
+            self.bytes_per_sample = bytes_float32
+            self._dtype = torch.float32
+            self._store_uint8 = False
+        elif self.mem_budget >= bytes_uint8:
+            self.bytes_per_sample = bytes_uint8
+            self._dtype = torch.uint8
+            self._store_uint8 = True
+        else:
             raise ValueError("Budget too small for even 1 raw sample!")
-        self.capacity = self.mem_budget // self.bytes_per_sample
+
+        self.capacity = max(1, self.mem_budget // self.bytes_per_sample)
         self.images: List[torch.Tensor] = []
         self.labels: List[int] = []
-        self._ptr = 0
+        self._ptr = 0  # write pointer for ring behaviour
 
+    # --------------------------- API ----------------------------
     def update(self, imgs: torch.Tensor, labels: torch.Tensor):
+        """Insert a batch of samples into the ring buffer."""
         for i in range(imgs.size(0)):
+            if self._store_uint8:
+                img_to_store = (imgs[i].clamp(0, 1) * 255.0).round().to(torch.uint8)
+            else:
+                img_to_store = imgs[i].to(torch.float32)
+
             if len(self.images) < self.capacity:
-                self.images.append(imgs[i].cpu())
+                self.images.append(img_to_store.cpu())
                 self.labels.append(int(labels[i]))
             else:
-                self.images[self._ptr] = imgs[i].cpu()
+                self.images[self._ptr] = img_to_store.cpu()
                 self.labels[self._ptr] = int(labels[i])
                 self._ptr = (self._ptr + 1) % self.capacity
 
     def sample(self, n: int):
         assert self.images, "RawRingBuffer is empty!"
         idx = np.random.choice(len(self.images), size=n, replace=len(self.images) < n)
-        imgs = torch.stack([self.images[i] for i in idx])
+        if self._store_uint8:
+            imgs = torch.stack([(self.images[i].to(torch.float32) / 255.0) for i in idx])
+        else:
+            imgs = torch.stack([self.images[i] for i in idx])
         labs = torch.tensor([self.labels[i] for i in idx], dtype=torch.long)
         return imgs, labs
 

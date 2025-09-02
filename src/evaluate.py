@@ -43,23 +43,13 @@ from .train import (
 # ------------------------------------------------------------------
 
 def _find_metric(metrics: Dict[str, Any], name_substr: str) -> float:
-    """Return the first metric whose key contains *name_substr* (case-insensitive).
-
-    Over the last Avalanche releases several metric names changed:
-        • "Accuracy" → "Acc"
-        • "Forgetfulness" → "Forgetting"
-    To remain fully backward-/forward-compatible we therefore try the
-    requested substring verbatim first and – if nothing matches – retry
-    using the most common synonyms.
-    """
+    """Return the first metric whose key contains *name_substr* (case-insensitive)."""
 
     def _search(keys, substr):
         for k in sorted(keys):  # deterministic
             if substr.lower() in k.lower():
-                # Prefer evaluation-phase metrics when available
                 if "/eval" in k or "eval_phase" in k:
                     return k
-        # Fallback: first match irrespective of phase
         for k in sorted(keys):
             if substr.lower() in k.lower():
                 return k
@@ -67,7 +57,6 @@ def _find_metric(metrics: Dict[str, Any], name_substr: str) -> float:
 
     key = _search(metrics.keys(), name_substr)
     if key is None:
-        # -------------------- synonym fall-back -------------------
         synonym_map = {
             "accuracy": "acc",
             "acc": "accuracy",
@@ -127,12 +116,18 @@ def run_experiment_1():
             torch.cuda.empty_cache()
             print(f"\n*** Budget = {budget} kB | Method = {method} ***")
 
-            if method == "BPR":
-                buffer = BitPackBuffer(img_shape, mem_budget_kb=budget, rank=32)
-            elif method == "RAW":
-                buffer = RawRingBuffer(img_shape, mem_budget_kb=budget)
-            else:
-                raise ValueError(method)
+            # ---------------- buffer creation --------------------
+            try:
+                if method == "BPR":
+                    buffer = BitPackBuffer(img_shape, mem_budget_kb=budget, rank=32)
+                elif method == "RAW":
+                    buffer = RawRingBuffer(img_shape, mem_budget_kb=budget)
+                else:
+                    raise ValueError(method)
+            except ValueError as e:
+                # Budget too small for RAW – skip and continue gracefully
+                print(f"[skip] {method} cannot operate under {budget} kB: {e}")
+                continue
 
             # CIFAR-friendly ResNet-18 (kernel 3 stride 1, no max-pool)
             model = models.resnet18(num_classes=100)
@@ -171,6 +166,10 @@ def run_experiment_1():
             )
 
     # ---------------- save CSV & generate figures ------------------
+    if not all_records:
+        print("No results to plot – all configurations were skipped.")
+        return
+
     df = pd.DataFrame(all_records)
     csv_path = LOG_ROOT / "exp1_results.csv"
     df.to_csv(csv_path, index=False)
