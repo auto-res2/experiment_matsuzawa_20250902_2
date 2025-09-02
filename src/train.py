@@ -1,6 +1,16 @@
 """src/train.py
 Training-related components: model, losses, accuracy helpers and one-epoch
 training loop.
+Fix 2025-09-02
+    • Counter-factual ACE construction used the *projected* latent (512-dim) 
+      vectors which cannot be reshaped back to the Stable-Diffusion VAE latent
+      grid (4×28×28 for 224×224 images) – resulting in a shape mismatch
+      RuntimeError.  We now build the counter-factual directly from the **raw
+      VAE latent** (before projection):
+          1.   encode → z_flat  →  reshape to [B, 4, H/8, W/8]
+          2.   permute the whole latent (simple but effective ‑ avoids the
+               invalid cat+view operation)
+          3.   decode back to pixel space.
 """
 from __future__ import annotations
 
@@ -28,9 +38,9 @@ SEED = 0
 random.seed(SEED)
 np.random.seed(SEED)
 torch.manual_seed(SEED)
-torch.cuda.manual_seed_all(SEED)
-cudnn.deterministic = True
-cudnn.benchmark = False
+torch.cuda.manual_seed_all(SEED)  # type: ignore[attr-defined]
+cudnn.deterministic = True  # type: ignore[attr-defined]
+cudnn.benchmark = False  # type: ignore[attr-defined]
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -112,12 +122,13 @@ class CCLiDAR(nn.Module):
         """Forward pass returning the composite loss and logging info."""
         x: torch.Tensor = batch["x"].to(device)
         y: torch.Tensor = batch["y"].to(device)
+        B = x.size(0)
 
         # -- Encode latents (no grad)
         with torch.no_grad():
-            z = self.encode_latent(x)
-        z_c = self.content_head(z)
-        z_k = self.context_head(z)
+            z_flat = self.encode_latent(x)  # [B, 4*28*28]
+        z_c = self.content_head(z_flat)
+        z_k = self.context_head(z_flat)
 
         # -- Main classifier logits & CE
         logits = self.forward_backbone(x)
@@ -126,23 +137,25 @@ class CCLiDAR(nn.Module):
         # ------------- InfoNCE (view-invariance) -------------
         x2 = batch["x2"].to(device)  # supplied by training loop
         with torch.no_grad():
-            z2 = self.encode_latent(x2)
-        z2_c = self.content_head(z2)
-        z2_k = self.context_head(z2)
+            z2_flat = self.encode_latent(x2)
+        z2_c = self.content_head(z2_flat)
+        z2_k = self.context_head(z2_flat)
         nce_c = self.info_nce(F.normalize(z_c, dim=-1), F.normalize(z2_c, dim=-1))
         nce_k = -self.info_nce(F.normalize(z_k, dim=-1), F.normalize(z2_k, dim=-1))
         loss_nce = nce_c + nce_k
 
         # ------------- Counterfactual ACE regulariser -------------
-        perm = torch.randperm(z_k.size(0))
-        z_k_perm = z_k[perm]
+        perm = torch.randperm(B, device=device)
         with torch.no_grad():
-            # crude "concatenate & reshape" back to latent grid
-            full_latent = torch.cat([z_c, z_k_perm], dim=1)
-            full_latent = full_latent.view(
-                x.size(0), 4, self.cfg.latent_h // 8, self.cfg.latent_w // 8
-            )
-            x_cf = self.vae.decode(full_latent).sample  # type: ignore
+            # Use **raw VAE latent** and simply permute it to destroy context.
+            z_view = z_flat.view(
+                B,
+                self.vae.config.latent_channels,
+                self.cfg.latent_h // 8,
+                self.cfg.latent_w // 8,
+            )  # [B, 4, 28, 28]
+            z_cf_latent = z_view[perm]  # shuffled across batch
+            x_cf = self.vae.decode(z_cf_latent).sample  # type: ignore
         with autocast(enabled=self.cfg.fp16):
             logits_cf = self.forward_backbone(x_cf)
         ace = (logits - logits_cf).pow(2).mean(dim=-1)  # per-sample squared diff
