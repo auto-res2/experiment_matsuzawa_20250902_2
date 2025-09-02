@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/main.py", line 16, in <module>
+    exp1()
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/evaluate.py", line 59, in exp1
+    assert diff < 1e-6, f"Linear-equivalence test failed (diff {diff})"
+           ^^^^^^^^^^^
+AssertionError: Linear-equivalence test failed (diff 0.00010127468704013154)
