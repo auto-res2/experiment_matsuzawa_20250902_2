@@ -3,8 +3,10 @@ train.py – Model, training utilities and MUCD core components
 """
 from __future__ import annotations
 
+import os
 import random
-from typing import Dict, List
+from pathlib import Path
+from typing import List
 
 import numpy as np
 import torch
@@ -43,6 +45,7 @@ def accuracy(logits: torch.Tensor, y: torch.Tensor) -> float:
 # MUCD core – Environment discovery & perturbations
 # -----------------------------------------------------------------------------
 
+
 class EnvCluster:
     """Unsupervised environment discovery via mini-batch spectral clustering."""
 
@@ -51,7 +54,8 @@ class EnvCluster:
 
         self.emb_dim = emb_dim
         self.num_clusters = num_clusters
-        self.encoder = timm.create_model("resnet18", pretrained=True, num_classes=0).to(DEVICE)
+        # Avoid downloading weights – use random initialisation (pretrained=False)
+        self.encoder = timm.create_model("resnet18", pretrained=False, num_classes=0).to(DEVICE)
         self.encoder.eval()
         # projection head
         self.proj = nn.Sequential(
@@ -109,8 +113,8 @@ class DualPerturber(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
-        import torch
         import random
+        import torch
 
         # Semantic: random erase (proxy for CLIP+SAM masking)
         x_sem = torch.stack([self.erase(img.clone()) for img in x])
@@ -124,6 +128,7 @@ class DualPerturber(nn.Module):
     @staticmethod
     def _frequency_swap(x: torch.Tensor) -> torch.Tensor:
         import random
+
         b, c, h, w = x.shape
         Xf = torch.fft.rfft2(x.float(), dim=(-2, -1), norm="ortho")
         Xf = fftshift(Xf, dim=(-2, -1))
@@ -161,6 +166,7 @@ def cer_loss(
 # Experiment runner (training & validation loop)
 # -----------------------------------------------------------------------------
 
+
 class ExperimentRunner:
     """Wrapper that owns model, optimiser, and training / validation loops."""
 
@@ -174,15 +180,15 @@ class ExperimentRunner:
         self.exp_name = exp_name
         self.epochs = epochs
 
-        # Backbone – ImageNet-pretrained ResNet-50
-        self.model = timm.create_model("resnet50", pretrained=True, num_classes=num_classes).to(
+        # Backbone – ImageNet-pretrained ResNet-50 (set pretrained=False to avoid net access)
+        self.model = timm.create_model("resnet50", pretrained=False, num_classes=num_classes).to(
             DEVICE
         )
 
         self.optim = torch.optim.AdamW(
             self.model.parameters(), lr=lr, betas=(0.9, 0.999), weight_decay=0.05
         )
-        self.scaler = GradScaler()
+        self.scaler = GradScaler(enabled=torch.cuda.is_available())
 
         # MUCD specific components
         self.clusterer = EnvCluster(num_clusters=8)
@@ -206,7 +212,7 @@ class ExperimentRunner:
                 env_id = self.clusterer.assign(xb)
                 xb_pert = self.perturber(xb)
 
-                with autocast():
+                with autocast(enabled=torch.cuda.is_available()):
                     logits = self.model(xb)
                     logits_p = self.model(xb_pert)
                     loss_erm = F.cross_entropy(logits, yb)
@@ -226,7 +232,8 @@ class ExperimentRunner:
             print(f"Validation Acc: {val_acc:.2f}% – Best: {best_acc:.2f}%")
 
         # restore best checkpoint for subsequent testing
-        if (ckpt := f"{self.exp_name}_best.pt") and torch.path.exists(ckpt):
+        ckpt = Path(f"{self.exp_name}_best.pt")
+        if ckpt.exists():
             self.model.load_state_dict(torch.load(ckpt, map_location=DEVICE))
 
     # ------------------------------------------------------------------

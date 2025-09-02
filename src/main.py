@@ -4,7 +4,7 @@ main.py – orchestrates MUCD toy experiment (Waterbirds) using refactored modul
 from __future__ import annotations
 
 import json
-import os
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -81,7 +81,6 @@ def main():
     # Figure
     # ------------------------------------------------------------------
     save_bar_plot({"MUCD": test_acc}, "Test Accuracy – Waterbirds (toy)", "accuracy_waterbirds.pdf")
-    print("Generated figure: accuracy_waterbirds.pdf")
 
 
 if __name__ == "__main__":
