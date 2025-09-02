@@ -6,7 +6,6 @@ compute average accuracy across the supplied DataLoader.
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Dict, List
 
@@ -54,7 +53,8 @@ def evaluate(
 # -----------------------------------------------------------------------------
 
 # CI specification: all experiment images must be placed under this directory.
-_SAVE_DIR = Path(".research/iteration10/images")  # <- updated to match CI rules
+# NOTE: The CI guidelines were updated from `iteration10` → `iteration11`.
+_SAVE_DIR = Path(".research/iteration11/images")
 
 
 def save_line_plot(
@@ -65,6 +65,8 @@ def save_line_plot(
     ylab: str,
     fname: str,
 ) -> None:  # pragma: no cover
+    """Save a simple line plot under the CI-mandated directory."""
+
     _SAVE_DIR.mkdir(parents=True, exist_ok=True)
     plt.figure(figsize=(5, 3))
 
