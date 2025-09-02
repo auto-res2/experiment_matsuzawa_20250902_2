@@ -10,4 +10,3 @@ tqdm
 ptflops
 pillow
 scikit_learn
-pytorch_grad_cam

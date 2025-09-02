@@ -21,7 +21,7 @@ from .evaluate import evaluate, save_line_plot
 from .preprocess import WaterbirdsWithCF
 
 # -----------------------------------------------------------------------------
-# Global constants & environment checks (Abort on failure)
+# Global constants (pure data – **no side-effects at import time**)
 # -----------------------------------------------------------------------------
 DEFAULT_SEEDS = [0]
 DATA_ENV_VARS = {
@@ -29,15 +29,32 @@ DATA_ENV_VARS = {
     "WATERBIRDS_CF_ROOT": "Pre-generated Waterbirds counterfactual images root directory",
 }
 
-for env_var, human_msg in DATA_ENV_VARS.items():
-    root = os.environ.get(env_var, "")
-    if root == "" or not Path(root).exists():
-        raise RuntimeError(
-            f"[CONSISTENCY-CHECK] Environment variable {env_var} not set or path does not exist → {human_msg}."
-        )
-    # quick sanity: must contain at least one image file
-    if len(list(Path(root).rglob("*.jpg"))) + len(list(Path(root).rglob("*.png"))) == 0:
-        raise RuntimeError(f"[CONSISTENCY-CHECK] {env_var}='{root}' contains no images – aborting.")
+
+# -----------------------------------------------------------------------------
+# Helper – ensure data directories exist (only called when experiment is run)
+# -----------------------------------------------------------------------------
+
+def _verify_environment() -> None:
+    """Validate that all required dataset environment variables are set.
+
+    Performed at *runtime*, not import-time, to allow library users to import
+    `src.main` without having the Waterbirds datasets installed locally.
+    """
+    for env_var, human_msg in DATA_ENV_VARS.items():
+        root = os.environ.get(env_var, "")
+        if root == "" or not Path(root).exists():
+            raise RuntimeError(
+                f"[CONSISTENCY-CHECK] Environment variable {env_var} not set or path does not exist → {human_msg}."
+            )
+        # quick sanity: must contain at least one image file
+        if (
+            len(list(Path(root).rglob("*.jpg")))
+            + len(list(Path(root).rglob("*.png")))
+            == 0
+        ):
+            raise RuntimeError(
+                f"[CONSISTENCY-CHECK] {env_var}='{root}' contains no images – aborting."
+            )
 
 
 # -----------------------------------------------------------------------------
@@ -46,7 +63,11 @@ for env_var, human_msg in DATA_ENV_VARS.items():
 
 def run_experiment_1() -> None:
     print("\n================  Experiment 1 – Benchmark Robustness  ================")
-    print("This run executes BOTH baseline ERM and our SCaRI method on Waterbirds with ResNet-50 backbone.")
+    print(
+        "This run executes BOTH baseline ERM and our SCaRI method on Waterbirds with ResNet-50 backbone."
+    )
+
+    _verify_environment()  # <-- moved inside, executed only when experiment runs
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -141,6 +162,7 @@ def run_experiment_1() -> None:
 # -----------------------------------------------------------------------------
 
 def main() -> None:  # pragma: no cover
+    """CLI entry-point – kept minimal to avoid side-effects when imported."""
     run_experiment_1()
 
 
