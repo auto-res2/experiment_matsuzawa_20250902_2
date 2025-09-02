@@ -53,10 +53,8 @@ def evaluate(
 #  Plot helpers – store figures under the mandated path
 # -----------------------------------------------------------------------------
 
-# NOTE: The evaluation images must be written to the iteration **8** folder so
-# that the automated tests can locate them.  The previous path (iteration7)
-# caused the CI run to fail even though the code executed correctly.
-_SAVE_DIR = Path(".research/iteration8/images")
+# CI specification: all experiment images must be placed under this directory.
+_SAVE_DIR = Path(".research/iteration9/images")
 
 
 def save_line_plot(
