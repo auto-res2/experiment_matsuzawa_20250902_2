@@ -1,0 +1,10 @@
+/home/runner/work/_tool/Python/3.11.13/x64/lib/python3.11/site-packages/torchvision/models/_utils.py:208: UserWarning: The parameter 'pretrained' is deprecated since 0.13 and may be removed in the future, please use 'weights' instead.
+  warnings.warn(
+/home/runner/work/_tool/Python/3.11.13/x64/lib/python3.11/site-packages/torchvision/models/_utils.py:223: UserWarning: Arguments other than a weight enum or `None` for 'weights' are deprecated since 0.13 and may be removed in the future. The current behavior is equivalent to passing `weights=ResNet18_Weights.IMAGENET1K_V1`. You can also use `weights=ResNet18_Weights.DEFAULT` to get the most up-to-date weights.
+  warnings.warn(msg)
+  0%|          | 0.00/44.7M [00:00<?, ?B/s] 70%|███████   | 31.4M/44.7M [00:00<00:00, 328MB/s]100%|██████████| 44.7M/44.7M [00:00<00:00, 330MB/s]
+/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/main.py:72: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = GradScaler()
+train:   0%|          | 0/8 [00:00<?, ?it/s]/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/train.py:137: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with autocast():
+train:  12%|█▎        | 1/8 [00:00<00:03,  2.12it/s]train:  38%|███▊      | 3/8 [00:00<00:00,  5.80it/s]train:  62%|██████▎   | 5/8 [00:00<00:00,  8.65it/s]train: 100%|██████████| 8/8 [00:00<00:00, 12.91it/s]                                                    eval:   0%|          | 0/2 [00:00<?, ?it/s]                                           train:   0%|          | 0/8 [00:00<?, ?it/s]train:  38%|███▊      | 3/8 [00:00<00:00, 22.88it/s]train:  75%|███████▌  | 6/8 [00:00<00:00, 22.89it/s]                                                    eval:   0%|          | 0/2 [00:00<?, ?it/s]                                           
