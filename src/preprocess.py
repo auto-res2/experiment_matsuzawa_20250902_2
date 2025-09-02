@@ -23,12 +23,46 @@ DATA_DIR = ROOT / "data";    DATA_DIR.mkdir(exist_ok=True)
 #  Determinism helpers ----------------------------------------------------------------
 # -------------------------------------------------------------------------------------
 
+
+def _enable_determinism() -> None:
+    """Enable (best-effort) deterministic behaviour without raising errors.
+
+    Some CUDA operations – notably GEMMs executed via cuBLAS – have no fully
+    deterministic implementation.  When ``torch.use_deterministic_algorithms`` is
+    set *strictly* (``warn_only=False``), PyTorch raises a ``RuntimeError`` the
+    first time such an op is encountered.  This repository only requires
+    *reproducibility* rather than *bit-exact* deterministic results, so we opt for
+    a pragmatic compromise:
+
+    1.  The necessary cuBLAS workspace configuration variable is exported **before
+        any GPU kernels are launched**.  This selects an alternative algorithm
+        that is deterministic up to the limits of floating-point arithmetic.
+    2.  ``torch.use_deterministic_algorithms`` is called with ``warn_only=True`` so
+        that PyTorch logs a warning instead of aborting when it cannot guarantee
+        strict determinism.
+    """
+    # (1) cuBLAS reproducibility -----------------------------------------------------
+    # Needs to be set *before* the first CUDA context is initialised.
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":16:8")
+
+    # (2) Activate PyTorch deterministic mode but do *not* raise on violations.
+    # The ``warn_only`` keyword is available from PyTorch ≥1.11.
+    try:
+        torch.use_deterministic_algorithms(True, warn_only=True)
+    except TypeError:
+        # Fallback for very old PyTorch versions that do not expose warn_only.
+        # In that case we prefer turning determinism *off* to avoid runtime
+        # crashes that would otherwise occur during the backward pass.
+        torch.use_deterministic_algorithms(False)
+
+
 def set_seed(seed: int):
+    """Seed all RNGs and switch PyTorch to (best-effort) deterministic behaviour."""
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
     random.seed(seed)
-    torch.use_deterministic_algorithms(True)
+    _enable_determinism()
 
 # -------------------------------------------------------------------------------------
 #  Image transforms -------------------------------------------------------------------
