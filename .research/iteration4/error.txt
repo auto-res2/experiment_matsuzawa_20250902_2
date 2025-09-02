@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/main.py", line 9, in <module>
+    from .evaluate import exp1_run, exp2_run, exp3_run
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/evaluate.py", line 81
+    print(df.groupby("variant").agg(["mean","std").round(2)][[("clean","mean"),("mce","mean"),("es","mean")]])
+                                                 ^
+SyntaxError: closing parenthesis ')' does not match opening parenthesis '['
