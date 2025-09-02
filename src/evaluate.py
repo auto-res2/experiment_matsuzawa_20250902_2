@@ -8,6 +8,7 @@ from typing import List
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from scipy import stats
@@ -52,6 +53,9 @@ def eval_all(model: ResNet18, loaders: List[DataLoader]):
 # -------------------------------------------------------------------------------------
 
 def offline_sanity(seed: int = 0, epochs: int = 1):
+    """Quick deterministic sanity check: CIFAR-100 → ResNet-18.
+
+    Exits the program if accuracy after *epochs* training epochs drops below 70 %."""
     from torchvision import datasets
 
     set_seed(seed)
@@ -124,6 +128,10 @@ def experiment1(seeds: List[int], fast: bool):
 
         # ---------- iterate tasks --------------------------------------------------
         for t, (tr, te) in enumerate(zip(tr_tasks, te_tasks)):
+            # Inform HOFQ about the new task **before** training starts.
+            if t > 0:  # no residual code-book for the very first task
+                buf_hofq.new_task()
+
             ld = DataLoader(tr, batch_size=32, shuffle=True, num_workers=2, pin_memory=True)
             # HOFQ -------------------------------------------------------------------
             train_task(model, ld, opt, buf_hofq, "hofq")
