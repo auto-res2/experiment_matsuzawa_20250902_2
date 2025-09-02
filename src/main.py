@@ -1,141 +1,148 @@
-"""src/main.py
-Execution entry-point: orchestrates Experiment-1 demonstrating SCaRI on Waterbirds.
-Run with:  python -m src.main
+"""
+main.py
+Entry point orchestrating the experiment from individual modules.
+Run via:  python -m src.main
 """
 from __future__ import annotations
 
 import json
 import os
-import sys
+import time
 from pathlib import Path
 
 import numpy as np
 import torch
 from torch.cuda.amp import GradScaler
 from torch.utils.data import DataLoader
+from tqdm import tqdm  # noqa: F401 – used in imported modules
 
-from .preprocess import set_seed, WaterbirdsWildsWrapper, collate_with_optional_cf
-from .train import SCaRINet, train_epoch
-from .evaluate import evaluate, save_line_fig
+from .train import SCaRINet, seed_everything, train_one_epoch
+from .evaluate import evaluate, save_line_plot
+from .preprocess import WaterbirdsWithCF
 
 # -----------------------------------------------------------------------------
-#  Constants & environment checks
+# Global constants & environment checks (Abort on failure)
 # -----------------------------------------------------------------------------
-GLOBAL_SEED = 0
-DEFAULT_BS = 128
-DEFAULT_EPOCHS = 30
+DEFAULT_SEEDS = [0]
+DATA_ENV_VARS = {
+    "WATERBIRDS_ROOT": "Waterbirds images (WILDS) root directory",
+    "WATERBIRDS_CF_ROOT": "Pre-generated Waterbirds counterfactual images root directory",
+}
+
+for env_var, human_msg in DATA_ENV_VARS.items():
+    root = os.environ.get(env_var, "")
+    if root == "" or not Path(root).exists():
+        raise RuntimeError(
+            f"[CONSISTENCY-CHECK] Environment variable {env_var} not set or path does not exist → {human_msg}."
+        )
+    # quick sanity: must contain at least one image file
+    if len(list(Path(root).rglob("*.jpg"))) + len(list(Path(root).rglob("*.png"))) == 0:
+        raise RuntimeError(f"[CONSISTENCY-CHECK] {env_var}='{root}' contains no images – aborting.")
 
 
-def _choose_hyperparams(synthetic: bool):
-    """Return (arch, batch_size, epochs) depending on dataset availability."""
-    if synthetic:
-        # Keep the CI run lightweight
-        return "resnet18", min(32, DEFAULT_BS), 2
-    return "resnet50", DEFAULT_BS, DEFAULT_EPOCHS
+# -----------------------------------------------------------------------------
+#   Experiment 1 – SCaRI vs ERM on Waterbirds (ResNet-50, seed 0)
+# -----------------------------------------------------------------------------
 
+def run_experiment_1() -> None:
+    print("\n================  Experiment 1 – Benchmark Robustness  ================")
+    print("This run executes BOTH baseline ERM and our SCaRI method on Waterbirds with ResNet-50 backbone.")
 
-def run_experiment_1(seed: int = GLOBAL_SEED) -> None:
-    print("===== Experiment 1 – Standard-Benchmark Robustness Sweep =====")
-    print(
-        "Goal: Verify that SCaRI preserves ID accuracy and boosts worst-group and OOD accuracy without spurious annotations.\n"
-    )
-
-    set_seed(seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # ------------------------------------------------------------------
-    #  Initialise dataset (real or synthetic)
-    # ------------------------------------------------------------------
-    cf_root_env = os.environ.get("WATERBIRDS_CF_ROOT")
-    cf_root = Path(cf_root_env) if cf_root_env and Path(cf_root_env).exists() else None
-    if cf_root is None:
-        print("[WARN] Counterfactual directory not found – training without CF branch.")
+    results_table = []
+    for method in ["erm", "scari"]:
+        print(f"\n---------- Method: {method.upper()} ----------")
+        seed_everything(DEFAULT_SEEDS[0])
 
-    train_ds = WaterbirdsWildsWrapper("train", cf_root=cf_root)
-    val_ds = WaterbirdsWildsWrapper("val", cf_root=None)  # No CFs during validation
-
-    arch, BS, EPOCHS = _choose_hyperparams(train_ds.synthetic)
-    num_workers = 0  # Robust setting for most CI runners
-
-    train_loader = DataLoader(
-        train_ds, batch_size=BS, shuffle=True, num_workers=num_workers, collate_fn=collate_with_optional_cf
-    )
-    val_loader = DataLoader(
-        val_ds, batch_size=BS, shuffle=False, num_workers=num_workers, collate_fn=collate_with_optional_cf
-    )
-
-    # ------------------------------------------------------------------
-    #  Model, optimiser, scaler
-    # ------------------------------------------------------------------
-    model = SCaRINet(arch, num_classes=2).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, weight_decay=0.05)
-    scaler = GradScaler()
-
-    # ------------------------------------------------------------------
-    #  Training/validation loop
-    # ------------------------------------------------------------------
-    train_acc_hist, val_acc_hist = [], []
-    best_val_acc = -1.0
-    best_state = None
-
-    for epoch in range(1, EPOCHS + 1):
-        print(f"Epoch {epoch}/{EPOCHS}")
-        tr_loss, tr_acc = train_epoch(
-            model,
-            train_loader,
-            optimizer,
-            device,
-            scaler,
-            cit_tau=0.2,
-            eta=0.2,
+        # ------------------ Data ------------------
+        cf_root = Path(os.environ["WATERBIRDS_CF_ROOT"]) if method == "scari" else None
+        train_ds = WaterbirdsWithCF("train", cf_root)
+        val_ds = WaterbirdsWithCF("val", None)  # eval never needs CFs
+        train_loader = DataLoader(
+            train_ds, batch_size=128, shuffle=True, num_workers=8, pin_memory=True
         )
-        val_loss, val_acc = evaluate(model, val_loader, device)
-        print(
-            f"train-loss {tr_loss:.4f} | train-acc {tr_acc:.2f} | val-loss {val_loss:.4f} | val-acc {val_acc:.2f}"
+        val_loader = DataLoader(
+            val_ds, batch_size=128, shuffle=False, num_workers=8, pin_memory=True
         )
-        train_acc_hist.append(tr_acc)
-        val_acc_hist.append(val_acc)
 
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
-            best_state = {k: v.cpu() for k, v in model.state_dict().items()}
+        # ------------------ Model & optim ------------------
+        model = SCaRINet("resnet50", n_classes=2).to(device)
+        opt = torch.optim.AdamW(model.parameters(), lr=3e-4, weight_decay=5e-2)
+        scaler = GradScaler()
 
-    # ------------------------------------------------------------------
-    #  Plotting and logging
-    # ------------------------------------------------------------------
-    epochs_range = list(range(1, EPOCHS + 1))
-    save_line_fig(
-        epochs_range,
-        {"train_acc": train_acc_hist, "val_acc": val_acc_hist},
-        title="Training vs Validation Accuracy (Waterbirds)",
-        xlabel="Epoch",
-        ylabel="Accuracy (%)",
-        filename="accuracy_waterbirds_scari",
-    )
+        best_val_acc = -1.0
+        history_acc, history_wg = [], []
+        EPOCHS = 3 if os.environ.get("FAST_DEBUG", "0") == "1" else 30
 
-    print("Numerical Results: (mean over epochs)")
+        for epoch in range(1, EPOCHS + 1):
+            t0 = time.time()
+            if method == "scari":
+                train_stats = train_one_epoch(model, train_loader, opt, scaler, device)
+            else:
+                # ---------- ERM: identical code path minus CF losses ----------
+                model.train()
+                ce_losses, accs = [], []
+                for x, y, _meta, _ in tqdm(train_loader, desc="train", leave=False):
+                    x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
+                    opt.zero_grad(set_to_none=True)
+                    with torch.cuda.amp.autocast():
+                        _feat, _proj, logits = model(x)
+                        loss = torch.nn.functional.cross_entropy(logits, y)
+                    scaler.scale(loss).backward()
+                    scaler.step(opt)
+                    scaler.update()
+                    ce_losses.append(loss.item())
+                    accs.append((logits.argmax(1) == y).float().mean().item() * 100.0)
+                train_stats = {
+                    "train_loss": float(np.mean(ce_losses)),
+                    "train_acc": float(np.mean(accs)),
+                }
+
+            val_stats = evaluate(model, val_loader, device)
+            history_acc.append(val_stats["val_acc"])
+            history_wg.append(val_stats["val_worst_group_acc"])
+            print(
+                f"Epoch {epoch:02d}/{EPOCHS}  |  tr-loss {train_stats['train_loss']:.3f}  "
+                f"tr-acc {train_stats['train_acc']:.1f}  val-acc {val_stats['val_acc']:.1f}  "
+                f"worst-grp {val_stats['val_worst_group_acc']:.1f}  (t {time.time()-t0:.1f}s)"
+            )
+            if val_stats["val_acc"] > best_val_acc:
+                best_val_acc = val_stats["val_acc"]
+                best_state = {k: v.cpu() for k, v in model.state_dict().items()}
+
+        # --------------- save figure per method ---------------
+        save_line_plot(
+            list(range(1, EPOCHS + 1)),
+            {"val_acc": history_acc, "worst_group": history_wg},
+            title=f"{method.upper()} – Waterbirds Validation",
+            ylab="Accuracy (%)",
+            fname=f"waterbirds_{method}_accuracy",
+        )
+
+        results_table.append(
+            {
+                "method": method,
+                "best_val_acc": best_val_acc,
+                "last_val_worst_group": history_wg[-1],
+            }
+        )
+
+    # ------------------- Print summary -------------------
+    print("\n================  Experiment 1 – Numerical Summary  ================")
+    print(json.dumps(results_table, indent=2))
     print(
-        json.dumps(
-            {"train_acc_mean": float(np.mean(train_acc_hist)), "val_acc_best": best_val_acc},
-            indent=2,
-        )
+        "Figures written: waterbirds_erm_accuracy.pdf, waterbirds_scari_accuracy.pdf"
     )
 
-    if best_state is not None:
-        torch.save(best_state, "best_model_scari_waterbirds.pth")
-        print("Best model checkpoint saved: best_model_scari_waterbirds.pth")
 
-    print("Figures generated: accuracy_waterbirds_scari.pdf")
+# -----------------------------------------------------------------------------
+# MAIN
+# -----------------------------------------------------------------------------
 
-
-def main() -> None:  # noqa: D401
-    """Entry point used by `python -m src.main`."""
-    try:
-        run_experiment_1()
-    except Exception as exc:  # pragma: no cover
-        print("Fatal error during Experiment 1:", file=sys.stderr)
-        raise exc
+def main() -> None:  # pragma: no cover
+    run_experiment_1()
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()

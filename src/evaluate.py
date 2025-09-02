@@ -1,88 +1,101 @@
-"""src/evaluate.py
-Evaluation utilities: accuracy computation, validation loop, and plotting helpers.
+"""
+evaluate.py
+Validation utilities: evaluation loop, worst-group accuracy and figure helpers.
 """
 from __future__ import annotations
 
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
 from tqdm import tqdm
 import matplotlib
 
-matplotlib.use("Agg")  # Headless backend for server environments
-import matplotlib.pyplot as plt
-import seaborn as sns
-
-from .train import accuracy  # Re-use shared metric
-
-__all__ = ["evaluate", "save_line_fig", "save_bar_fig"]
+matplotlib.use("Agg")  # Head-less backend for clusters
+import matplotlib.pyplot as plt  # noqa: E402
+import seaborn as sns  # noqa: E402; kept for compatibility even if not used directly
 
 # -----------------------------------------------------------------------------
-#  Validation / test loop
+# Metric helpers
 # -----------------------------------------------------------------------------
 
-def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device) -> Tuple[float, float]:
-    """Return (avg_loss, avg_accuracy) on the given loader."""
+def accuracy_from_logits(logits: torch.Tensor, y: torch.Tensor) -> float:
+    return (logits.argmax(1) == y).float().mean().item() * 100.0
+
+
+def worst_group_acc(meta: torch.Tensor, logits: torch.Tensor, y: torch.Tensor) -> float:
+    """Waterbirds: group = 2*y + place"""
+    place = meta[:, 1]
+    groups = 2 * y + place
+    preds = logits.argmax(1)
+    worst = 100.0
+    for g in range(4):
+        mask = groups == g
+        if mask.sum() == 0:
+            continue
+        group_acc = (preds[mask] == y[mask]).float().mean().item() * 100.0
+        worst = min(worst, group_acc)
+    return worst
+
+
+# -----------------------------------------------------------------------------
+# Evaluation loop
+# -----------------------------------------------------------------------------
+
+def evaluate(
+    model: torch.nn.Module,
+    loader: torch.utils.data.DataLoader,
+    device: torch.device,
+) -> Dict[str, float]:
     model.eval()
-    acc_meter, loss_meter = [], []
+    losses, accs, wg_accs = [], [], []
     with torch.no_grad():
-        for x, y, _, _ in tqdm(loader, desc="eval", leave=False):
+        for x, y, meta, _ in tqdm(loader, desc="eval", leave=False):
             x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
-            _, _, logits = model(x)
+            _feat, _proj, logits = model(x)
             loss = F.cross_entropy(logits, y)
-            loss_meter.append(loss.item())
-            acc_meter.append(accuracy(logits, y))
-    return float(np.mean(loss_meter)), float(np.mean(acc_meter))
+            losses.append(loss.item())
+            accs.append(accuracy_from_logits(logits, y))
+            wg_accs.append(worst_group_acc(meta, logits, y))
+
+    return {
+        "val_loss": float(np.mean(losses)),
+        "val_acc": float(np.mean(accs)),
+        "val_worst_group_acc": float(np.mean(wg_accs)),
+    }
 
 
 # -----------------------------------------------------------------------------
-#  Plotting helpers
+# Figure utilities
 # -----------------------------------------------------------------------------
 
-def save_line_fig(
+def save_line_plot(
     x: List[int],
     ys: Dict[str, List[float]],
     title: str,
-    xlabel: str,
-    ylabel: str,
-    filename: str,
-):
+    ylab: str,
+    fname: str,
+) -> None:
     plt.figure(figsize=(6, 4))
-    for name, y in ys.items():
-        plt.plot(x, y, marker="o", label=name)
-        for xi, yi in zip(x, y):
-            plt.annotate(f"{yi:.2f}", (xi, yi), textcoords="offset points", xytext=(0, 5), ha="center")
+    for k, v in ys.items():
+        plt.plot(x, v, marker="o", label=k)
+        for xi, yi in zip(x, v):
+            plt.annotate(
+                f"{yi:.1f}",
+                (xi, yi),
+                textcoords="offset points",
+                xytext=(0, 3),
+                ha="center",
+                fontsize=7,
+            )
+    plt.xlabel("Epoch")
+    plt.ylabel(ylab)
     plt.title(title)
-    plt.xlabel(xlabel)
-    plt.ylabel(ylabel)
     plt.legend()
-    plt.grid(True, linestyle="--", alpha=0.4)
-    fname = f"{filename}.pdf"
-    plt.savefig(fname, bbox_inches="tight")
-    print(f"Figure saved: {fname}")
-    plt.close()
-
-
-def save_bar_fig(values: Dict[str, float], title: str, ylabel: str, filename: str):
-    plt.figure(figsize=(8, 4))
-    names, vals = list(values.keys()), list(values.values())
-    bars = plt.bar(names, vals, color=sns.color_palette("husl", len(vals)))
-    plt.title(title)
-    plt.ylabel(ylabel)
-    for bar, val in zip(bars, vals):
-        plt.text(
-            bar.get_x() + bar.get_width() / 2,
-            bar.get_height() + 0.5,
-            f"{val:.2f}",
-            ha="center",
-            va="bottom",
-        )
-    plt.xticks(rotation=45, ha="right")
+    plt.grid(alpha=0.3)
     plt.tight_layout()
-    fname = f"{filename}.pdf"
-    plt.savefig(fname, bbox_inches="tight")
-    print(f"Figure saved: {fname}")
+    pdf = f"{fname}.pdf"
+    plt.savefig(pdf, bbox_inches="tight")
     plt.close()
+    print(f"[FIGURE] saved {pdf}")

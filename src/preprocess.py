@@ -1,14 +1,13 @@
-"""src/preprocess.py
-Data and random-seed utilities.
+"""
+preprocess.py
+Data loading / preprocessing logic for Waterbirds with counterfactuals.
 """
 from __future__ import annotations
 
 import os
-import random
 from pathlib import Path
-from typing import Optional, Tuple, List
+from typing import Optional
 
-import numpy as np
 import torch
 from torch.utils.data import Dataset
 import torchvision.transforms as T
@@ -16,171 +15,84 @@ from PIL import Image
 
 try:
     from wilds import get_dataset
-except ImportError:  # pragma: no cover
-    get_dataset = None  # type: ignore
-
-__all__ = [
-    "set_seed",
-    "WaterbirdsWildsWrapper",
-    "collate_with_optional_cf",
-]
+except ImportError as e:  # pragma: no cover
+    raise ImportError(
+        "The `wilds` library is mandatory – install with `pip install wilds`."
+    ) from e
 
 # -----------------------------------------------------------------------------
-#  Deterministic seed helper
+# Image & transform config
 # -----------------------------------------------------------------------------
-
-def set_seed(seed: int) -> None:
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+IMG_SIZE = 224
 
 
-# -----------------------------------------------------------------------------
-#  Custom collate fn that tolerates optional counterfactuals (None)
-# -----------------------------------------------------------------------------
+class WaterbirdsWithCF(Dataset):
+    """Waterbirds (WILDS) dataset that additionally provides diffusion CFs.
 
-def _stack(values: Tuple[torch.Tensor, ...]) -> torch.Tensor:
-    """Utility that stacks tensors along the first dimension."""
-    return torch.stack(list(values), dim=0)
-
-
-def collate_with_optional_cf(batch: List[Tuple[torch.Tensor, int, torch.Tensor, Optional[torch.Tensor]]]):
-    """Collate function for Waterbirds data.
-
-    It supports the counterfactual field being `None` for every sample by
-    returning a single `None` instead of a list of Nones (which breaks the
-    default PyTorch collate).
-    """
-
-    xs, ys, metas, cfs = zip(*batch)
-
-    xs = _stack(xs)
-    ys = torch.tensor(ys)
-    metas = torch.stack(metas) if isinstance(metas[0], torch.Tensor) else torch.tensor(metas)
-
-    # If the first element is `None` we assume all are None (uniform dataset)
-    if cfs[0] is None:
-        cfs_batch = None
-    else:
-        cfs_batch = torch.stack(cfs)  # (B, K, C, H, W)
-
-    return xs, ys, metas, cfs_batch
-
-
-# -----------------------------------------------------------------------------
-#  Dataset wrapper
-# -----------------------------------------------------------------------------
-class WaterbirdsWildsWrapper(Dataset):
-    """WILDS Waterbirds with optional diffusion counterfactuals.
-
-    If the real dataset is unavailable (e.g. in a CI environment without the
-    12-GB Waterbirds archive), a small synthetic dataset is generated so that
-    the rest of the training / evaluation pipeline can run end-to-end.
+    Each __getitem__ returns:
+        img, label, metadata, cf_imgs (Tensor[K,3,224,224] or None)
     """
 
     def __init__(self, split: str, cf_root: Optional[Path]):
+        assert split in {"train", "val", "test"}, "Invalid split"
+        self.wilds_data = get_dataset("waterbirds", root_dir=os.environ["WATERBIRDS_ROOT"])
+        self.subset = self.wilds_data.get_subset(split, transform=self._build_transform(split))
+        self.cf_root = Path(cf_root) if cf_root is not None else None
         self.split = split
-        self.cf_root = cf_root
-        self.synthetic = False  # Will be flipped if we fall back to toy data
 
-        # Attempt to load the real WILDS dataset ------------------------------------------------
-        self.subset = None  # type: ignore
-        if get_dataset is not None:
-            root_dir = os.environ.get("WATERBIRDS_ROOT", "./data")
-            try:
-                dataset = get_dataset(dataset="waterbirds", root_dir=root_dir)
-                transform = self._transform()
-                if split == "train":
-                    self.subset = dataset.get_subset("train", transform=transform)
-                elif split == "val":
-                    self.subset = dataset.get_subset("val", transform=transform)
-                elif split == "test":
-                    self.subset = dataset.get_subset("test", transform=transform)
-                else:
-                    raise ValueError(f"Unknown split: {split}")
-            except Exception:
-                # Any failure → fall back to synthetic data
-                self.subset = None
-
-        # Synthetic fallback --------------------------------------------------------------------
-        if self.subset is None:
-            self.synthetic = True
-            self._init_synthetic_dataset()
-
-    # -------------------------------------------------------------------------------------
-    # Synthetic dataset helpers
-    # -------------------------------------------------------------------------------------
-    def _init_synthetic_dataset(self):
-        # Define split sizes (tiny for fast unit-tests)
-        sizes = {"train": 256, "val": 64, "test": 64}
-        n_samples = sizes.get(self.split, 64)
-
-        # Pre-generate random data so __getitem__ is fast and deterministic
-        self._syn_images = torch.rand(n_samples, 3, 224, 224)
-        self._syn_labels = torch.randint(low=0, high=2, size=(n_samples,))
-        self._syn_meta = torch.zeros(n_samples, dtype=torch.long)
-
-    # -------------------------------------------------------------------------------------
-    # Static helpers
-    # -------------------------------------------------------------------------------------
+    # ---------------------------------------------------------------------
+    # Transforms
+    # ---------------------------------------------------------------------
     @staticmethod
-    def _transform():
-        """ImageNet-style augmentation used for the real Waterbirds dataset."""
-        return T.Compose(
-            [
-                T.Resize(256),
-                T.RandomResizedCrop(224),
+    def _build_transform(split: str):
+        train_t = split == "train"
+        aug = [T.Resize(256)]
+        if train_t:
+            aug += [
+                T.RandomResizedCrop(IMG_SIZE),
                 T.RandomHorizontalFlip(),
                 T.AutoAugment(T.AutoAugmentPolicy.IMAGENET),
                 T.RandomErasing(p=0.25),
-                T.ToTensor(),
-                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ]
-        )
+        else:
+            aug.append(T.CenterCrop(IMG_SIZE))
+        aug += [
+            T.ToTensor(),
+            T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ]
+        return T.Compose(aug)
 
-    # -------------------------------------------------------------------------------------
-    # PyTorch Dataset API
-    # -------------------------------------------------------------------------------------
-    def __len__(self):
-        if self.synthetic:
-            return len(self._syn_labels)
-        return len(self.subset)  # type: ignore[arg-type]
-
-    # -----------------------------------------------------
-    #  Counterfactual loading helper (only for real data)
-    # -----------------------------------------------------
-    def _load_counterfactuals(self, index: int) -> torch.Tensor:
+    # ------------------------------------------------------------------
+    # Counterfactual loader
+    # ------------------------------------------------------------------
+    def _load_cf(self, original_rel_path: Path) -> Optional[torch.Tensor]:
         if self.cf_root is None:
-            raise RuntimeError("Counterfactual directory not provided but requested.")
+            return None
 
-        img_path = Path(self.subset.dataset._input_array[index])  # type: ignore[attr-defined]
-        rel_path = img_path.relative_to(img_path.parents[2])  # data/waterbirds/...
-        cf_dir = self.cf_root / rel_path.parent / rel_path.stem
+        # CFs stored under <cf_root>/<same_rel_dir>/<imgStem>/cf_*.webp
+        cf_dir = self.cf_root / original_rel_path.parent / original_rel_path.stem
         if not cf_dir.exists():
-            raise FileNotFoundError(f"Expected counterfactual directory {cf_dir} for {img_path}")
-        cf_paths = sorted(list(cf_dir.glob("*.webp")))
-        if len(cf_paths) == 0:
-            raise RuntimeError(f"No counterfactuals found in {cf_dir}")
+            raise FileNotFoundError(f"Counterfactual directory missing: {cf_dir}")
+        cf_files = sorted(list(cf_dir.glob("*.webp")))
+        if len(cf_files) == 0:
+            raise RuntimeError(f"No counterfactual .webp files in {cf_dir}")
 
-        imgs = [Image.open(p).convert("RGB") for p in cf_paths]
-        tensor_imgs = [self.subset.transform(img) for img in imgs]
-        return torch.stack(tensor_imgs)
+        imgs = []
+        for p in cf_files:
+            with Image.open(p).convert("RGB") as img_pil:
+                imgs.append(self.subset.transform(img_pil))
+        return torch.stack(imgs)  # (K,3,224,224)
 
-    def __getitem__(self, idx: int):  # noqa: D401
-        # Synthetic branch -----------------------------------------------------------------
-        if self.synthetic:
-            x = self._syn_images[idx]
-            y = self._syn_labels[idx].item()
-            m = torch.tensor(0)
-            cf_imgs = None  # No CFs in synthetic mode
-            return x, y, m, cf_imgs
+    # ------------------------------------------------------------------
+    # Standard Dataset interface
+    # ------------------------------------------------------------------
+    def __len__(self):  # type: ignore[override]
+        return len(self.subset)
 
-        # Real WILDS branch -----------------------------------------------------------------
+    def __getitem__(self, idx):  # type: ignore[override]
         x, y, m = self.subset[idx]
-        cf_imgs = None
-        if self.cf_root is not None:
-            cf_imgs = self._load_counterfactuals(idx)
-        return x, y, m, cf_imgs
+        # relative path to find corresponding CF directory – assumes WILDS layout
+        img_path = Path(self.subset.dataset._input_array[idx])  # type: ignore[attr-defined]
+        rel = img_path.relative_to(img_path.parents[2])  # waterbird/... (2 levels up)
+        cf_imgs = self._load_cf(rel) if self.cf_root is not None else None
+        return x, int(y), m, cf_imgs
