@@ -1,0 +1,54 @@
+/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/train.py:229: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  self.scaler = GradScaler(enabled=torch.cuda.is_available())
+/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/train.py:253: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with autocast(enabled=torch.cuda.is_available()):
+/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/train.py:253: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with autocast(enabled=torch.cuda.is_available()):
+/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/train.py:253: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with autocast(enabled=torch.cuda.is_available()):
+/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/train.py:253: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with autocast(enabled=torch.cuda.is_available()):
+/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/train.py:253: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with autocast(enabled=torch.cuda.is_available()):
+/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/train.py:253: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with autocast(enabled=torch.cuda.is_available()):
+/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/train.py:253: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with autocast(enabled=torch.cuda.is_available()):
+/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/train.py:253: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with autocast(enabled=torch.cuda.is_available()):
+/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/train.py:253: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with autocast(enabled=torch.cuda.is_available()):
+/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/train.py:253: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with autocast(enabled=torch.cuda.is_available()):
+/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/train.py:253: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with autocast(enabled=torch.cuda.is_available()):
+/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/train.py:253: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with autocast(enabled=torch.cuda.is_available()):
+/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/train.py:253: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with autocast(enabled=torch.cuda.is_available()):
+/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/train.py:253: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with autocast(enabled=torch.cuda.is_available()):
+/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/train.py:253: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with autocast(enabled=torch.cuda.is_available()):
+/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/train.py:253: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with autocast(enabled=torch.cuda.is_available()):
+Unsupported operator aten::max_pool2d encountered 1 time(s)
+Unsupported operator aten::add_ encountered 16 time(s)
+/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/evaluate.py:33: FutureWarning: 
+
+Passing `palette` without assigning `hue` is deprecated and will be removed in v0.14.0. Assign the `x` variable to `hue` and set `legend=False` for the same effect.
+
+  sns.barplot(x=list(data.keys()), y=list(data.values()), palette="viridis")
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/main.py", line 87, in <module>
+    main()
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/main.py", line 83, in main
+    save_bar_plot({"MUCD": test_acc}, "Test Accuracy – Waterbirds (toy)", "accuracy_waterbirds.pdf")
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/evaluate.py", line 42, in save_bar_plot
+    print(f"Generated figure: {out_file.relative_to(Path.cwd())}")
+                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/_tool/Python/3.11.13/x64/lib/python3.11/pathlib.py", line 730, in relative_to
+    raise ValueError("{!r} is not in the subpath of {!r}"
+ValueError: '.research/iteration3/images/accuracy_waterbirds.pdf' is not in the subpath of '/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2' OR one path is relative and the other is absolute.
