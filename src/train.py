@@ -7,6 +7,21 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List, Tuple, Any, Dict
 import random, math
+import os  # NEW: needed for environment variable patch
+
+# -----------------------------------------------------------------------------
+#  Determinism patch for CUDA ≥10.2
+# -----------------------------------------------------------------------------
+# PyTorch requires a CUBLAS workspace configuration variable to be preset **at
+# process start-up** when deterministic algorithms are requested and the code
+# path hits GEMM (i.e. almost every deep-net).  Setting the variable here –
+# before any CUDA context is initialised – avoids the runtime error:
+#   "Deterministic behavior was enabled … but this operation is not deterministic …"
+# The chosen value (4096:8) follows the official PyTorch recommendations.
+if "CUBLAS_WORKSPACE_CONFIG" not in os.environ:
+    # The value must be either ":4096:8" or ":16:8" – the former gives a
+    # larger workspace and is marginally faster.
+    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
 import numpy as np
 import torch
