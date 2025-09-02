@@ -15,7 +15,37 @@ import torch.nn.functional as F
 from torch.cuda.amp import GradScaler, autocast
 from torch.utils.data import DataLoader
 import timm
-from scipy.fft import fftshift, ifftshift
+
+# -----------------------------------------------------------------------------
+# Torch-native fftshift / ifftshift ------------------------------------------------
+# -----------------------------------------------------------------------------
+# SciPy's fftshift works on NumPy arrays and would silently move tensors to CPU and
+# convert them to NumPy – something we definitely do **not** want (and which fails
+# outright for CUDA tensors).  PyTorch ≥1.8 ships with its own implementation that
+# operates directly on tensors.  We fall back to a simple `torch.roll` based stub
+# in the unlikely event of an older version.
+# -----------------------------------------------------------------------------
+try:
+    from torch.fft import fftshift, ifftshift  # type: ignore
+except (ImportError, AttributeError):  # pragma: no cover – very old torch
+
+    def _fftshift(x: torch.Tensor, dim=None):
+        if dim is None:
+            dim = tuple(range(x.ndim))
+        elif isinstance(dim, int):
+            dim = (dim,)
+        shifts = [(x.size(d) + 1) // 2 for d in dim]
+        return torch.roll(x, shifts=shifts, dims=dim)
+
+    def _ifftshift(x: torch.Tensor, dim=None):
+        if dim is None:
+            dim = tuple(range(x.ndim))
+        elif isinstance(dim, int):
+            dim = (dim,)
+        shifts = [-(x.size(d) // 2) for d in dim]
+        return torch.roll(x, shifts=shifts, dims=dim)
+
+    fftshift, ifftshift = _fftshift, _ifftshift
 
 # -----------------------------------------------------------------------------
 # Device & dtype helpers
@@ -121,7 +151,6 @@ class DualPerturber(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
-        import random
         import torch
 
         # Semantic: random erase (proxy for CLIP+SAM masking)
@@ -139,6 +168,7 @@ class DualPerturber(nn.Module):
 
         b, c, h, w = x.shape
         Xf = torch.fft.rfft2(x.float(), dim=(-2, -1), norm="ortho")
+        # Use *torch*'s fftshift (GPU-compatible)
         Xf = fftshift(Xf, dim=(-2, -1))
         # choose random 4×4 region per sample
         for i in range(b):
