@@ -1,1 +1,16 @@
-# Please list the required python packages.
+torch
+torchvision
+timm
+albumentations
+numpy
+pandas
+matplotlib
+seaborn
+fvcore
+tqdm
+wandb
+hydra-core
+omegaconf
+psutil
+pynvml
+detectron2
