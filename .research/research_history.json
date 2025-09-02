@@ -613,6 +613,68 @@
       }
     }
   ],
+  "reference_research_study_list": [
+    {
+      "title": "Interaction networks for learning about objects, relations and physics"
+    },
+    {
+      "title": "Convergence in multiagent coordination, consensus, and flocking"
+    },
+    {
+      "title": "How attentive are graph attention networks?"
+    },
+    {
+      "title": "Spectral networks and locally connected networks on graphs"
+    },
+    {
+      "title": "A note on over-smoothing for graph neural networks"
+    },
+    {
+      "title": "Simple and deep graph convolutional networks"
+    },
+    {
+      "title": "Sets of matrices all infinite products of which converge"
+    },
+    {
+      "title": "Convolutional neural networks on graphs for learning molecular fingerprints"
+    },
+    {
+      "title": "Fast graph representation learning with PyTorch Geometric"
+    },
+    {
+      "title": "Graph attention retrospective"
+    },
+    {
+      "title": "Neural message passing for quantum chemistry"
+    },
+    {
+      "title": "A new model for learning in graph domains"
+    },
+    {
+      "title": "Nonhomogeneous Matrix Products"
+    },
+    {
+      "title": "Bayesian graph neural networks with adaptive connection sampling"
+    },
+    {
+      "title": "Deep residual learning for image recognition"
+    },
+    {
+      "title": "Feature overcorrelation in deep graph neural networks: A new perspective"
+    },
+    {
+      "title": "The Joint Spectral Radius: Theory and Applications"
+    },
+    {
+      "title": "Not too little, not too much: a theoretical analysis of graph (over)smoothing"
+    },
+    {
+      "title": "Semi-supervised classification with graph convolutional networks"
+    },
+    {
+      "title": "Predict then propagate: Graph neural networks meet personalized pagerank"
+    }
+  ],
   "new_method": {
     "method": "Open Problems: Key challenge: Existing anti-oversmoothing techniques act uniformly for all nodes/layers (e.g.\nDropEdge, PairNorm, GCNII) or rely on costly global operations (e.g. ContraNorm O(n²)).\nHowever, real graphs are highly heterogeneous – dense communities profit from stronger\n“denoising” while bridge or hub nodes suffer from early feature collapse.  What is\nmissing is a light-weight, *node- and layer-adaptive* control of the diffusion process\nthat (1) preserves intra-community smoothness, (2) resists inter-community mixing, and\n(3) scales to million-node graphs.\n\nFormally, let Hₗ be layer-l features and P=D⁻¹A the random-walk matrix.  Classical\nmessage passing realises a pure diffusion:  Hₗ₊₁ = σ(PHₗWₗ).  We need a mechanism that\nadds a learnable *anti-diffusion* (reaction) term per node and per layer so that for\nany depth L the spectrum of the resulting operator keeps important feature directions\nfrom vanishing while still damping noise.\nMethods: We propose ADR-GNN – Adaptive *Reaction–Diffusion* Graph Neural Network.\nLayer rule (dropping bias/activation for clarity):\n    Hₗ₊₁ = LayerNorm( (I + γₗΘₗ) Hₗ  +  ηₗ P Hₗ ),\nwhere\n1. Diffusion weight ηₗ ∈ [0,1] is a *learned scalar per layer* initialised high and\n   annealed by the optimiser – gives a curriculum from denoising → distinction.\n2. Θₗ = diag( s( ϕ(hᵢ⁰ , hᵢₗ , dᵢ) ) ) is a diagonal matrix whose i-th entry is an\n   *anti-diffusion gate* for node i.  ϕ is an MLP of (initial feature, current feature,\n   log-degree).  s(·)=tanh assures |γₗΘₗ|<1 for stability.\n   Interpretation: nodes with already collapsed features (low variance wrt initial)\n   get negative feedback (push away); noisy nodes keep small Θ.\n3. γₗ is a small learnable global scale (<1) shared across nodes.\n4. LayerNorm keeps numerical stability – much cheaper than ContraNorm.\n\nRelation to prior work\n• Extends reaction–diffusion idea from physics, unused in GNN over-smoothing\n  literature.\n• Generalises residuals (GCNII) – here Θₗ can differ per node and change with depth.\n• Cheaper than ContraNorm (O(nd) vs O(n²d)); unlike NDLS/DropEdge, no pre/post\n  processing or random sampling.\n• Unlike PSNR, no stochastic sampling at inference.\n\nTheory (sketch)\nWe show the linearised operator (I+γΘ)+ηP has eigenvalues in [1-η,1+γ] guaranteeing\nno direction is amplified above 1+γ or shrunk below 1-η; choose γ<η to avoid\nexplosion.  Consequently, pairwise distance will never vanish completely, giving a\nprovable lower bound on representation variance.\nExperimental Setup: Datasets: Homophilic (Cora, Citeseer, Pubmed, ogbn-arxiv), heterophilic (Chameleon,\nSquirrel, Texas, Cornell, Wisconsin), large-scale (ogbn-products, ogbn-papers100M).\nDepths: {2, 8, 32, 128, 256} layers.\nBaselines: GCN, GCNII, DropEdge (ResGCN), PairNorm, DGN, ContraNorm-D,\nNDLS (feature+label), PSNR.\nMetrics:\n • Node classification accuracy/F1.\n • Oversmoothing measures:  µ(X) from Peebles’ paper, group distance ratio,\n   instance information gain, average pairwise squared distance.\n • Computational cost: time/epoch, peak memory.\nAblations:\n (A) remove Θ (only scalar γ) – equals GCNII-style residual.\n (B) fix Θ but learn η (layer curriculum only).\n (C) random Θ to test importance of learned gating.\nRobustness:\n • Missing-feature setting (erase p∈{10,30,50}% of unlabeled node features).\n • Edge sparsification stress test (randomly drop 20-80% edges at test time).\nImplementation: PyTorch Geometric; training with Adam, early stopping on val set;\nlayer width 64; for huge graphs use GraphSAINT mini-batching.\nResult: Expected trends:\n1. ADR-GNN matches best baseline at shallow depth and significantly outperforms all\n   others beyond 32 layers, retaining (>90%) of 2-layer accuracy even at 256 layers.\n2. Oversmoothing metrics: ADR keeps µ(X), APSD above 3× those of GCNII/DropEdge at\n   >64 layers; group distance ratio remains within 15% of initial.\n3. Robustness: under 50% feature removal, ADR accuracy drops <4%, vs 10–15% for\n   others; similar resilience to edge sparsification.\n4. Efficiency: +8% training time over vanilla GCN, <1.2× memory – much lower than\n   ContraNorm-D and PSNR.\n5. Ablations confirm both node-adaptive Θ and annealed η are necessary; removing\n   either halves the deep-layer accuracy gain.\nConclusion: ADR-GNN provides the first scalable *node- and layer-adaptive* reaction–diffusion\nmechanism that provably and practically curbs oversmoothing without expensive global\noperations or random sampling.  It unifies residual, normalization and\nanti-diffusion ideas in a single learnable operator, yielding state-of-the-art\ndeep-layer performance and superior robustness on both homophilic and heterophilic\ngraphs.\n\nBeyond node classification, the approach is applicable to link prediction and graph\ntransformers (replace P by attention matrix).  Future work: (i) theoretical analysis\nof convergence on degree-heterogeneous graphs, (ii) greener large-scale training via\nsparsity-induced Θ, (iii) extending to continuous-time dynamic graphs by treating η,\nΘ as functions of temporal graph signals.",
     "experimental_design": {
