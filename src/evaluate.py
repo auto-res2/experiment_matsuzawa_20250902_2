@@ -1,4 +1,4 @@
-"""src/evaluate.py – experimental loops, statistics & plotting"""
+"""src/evaluate.py – experimental loops, statistics & plotting (patched)"""
 from pathlib import Path
 import os
 import time
@@ -64,7 +64,9 @@ def run_exp1():
                 for t in range(num_tasks):
                     tr, val, _, cls = stream.get_task(t)
                     for m, buff in buffer_objs.items():
-                        clf = torch.nn.Linear(backbone.feat_dim, len(cls))
+                        # ---------------- classifier -----------------------
+                        # Use global label space (100 classes) to avoid index mismatches
+                        clf = torch.nn.Linear(backbone.feat_dim, 100)
                         acc = train_task(
                             backbone,
                             clf,
@@ -182,7 +184,7 @@ def run_exp3():
         task_acc = []
         for t in range(num_tasks):
             tr, val, _, cls = stream.get_task(t)
-            clf = torch.nn.Linear(backbone.feat_dim, len(cls))
+            clf = torch.nn.Linear(backbone.feat_dim, 100)  # global label space
             acc = train_task(
                 backbone,
                 clf,

@@ -1,4 +1,4 @@
-"""src/train.py – model definitions, buffers and training routine"""
+"""src/train.py – model definitions, buffers and training routine (patched)"""
 import io
 import math
 import random
@@ -188,6 +188,11 @@ class RingBuffer(RawImageBuffer):
 # Training routine ------------------------------------------------------------
 # -----------------------------------------------------------------------------
 
+def _is_feature_buffer(buf) -> bool:
+    """Utility: True if buffer expects feature vectors instead of raw images."""
+    return isinstance(buf, EFSBuffer)
+
+
 def train_task(
     backbone: nn.Module,
     classifier: nn.Module,
@@ -220,16 +225,23 @@ def train_task(
             out = classifier(feats)
             loss = F.cross_entropy(out, y)
 
-            # store influence-weighted samples in buffer ----------------------
+            # -------------------- buffer update --------------------------------
             infl = out.detach().norm(p=2, dim=1)
-            buffer.observe(feats.detach(), y.detach().cpu(), infl.cpu())
+            if _is_feature_buffer(buffer):
+                buffer.observe(feats.detach().cpu(), y.detach().cpu(), infl.cpu())
+            else:
+                buffer.observe(x.detach().cpu(), y.detach().cpu(), infl.cpu())
 
-            # replay ----------------------------------------------------------
+            # -------------------- replay ---------------------------------------
             replay_bs = int(128 * replay_r)
             if len(buffer) >= replay_bs > 0:
                 re_f, re_y = buffer.sample(replay_bs)
-                re_f, re_y = re_f.to(DEVICE), re_y.to(DEVICE)
-                loss += F.cross_entropy(classifier(re_f), re_y)
+                re_y = re_y.to(DEVICE)
+                if _is_feature_buffer(buffer):
+                    feat_re = re_f.to(DEVICE)
+                else:
+                    feat_re = backbone(re_f.to(DEVICE))
+                loss += F.cross_entropy(classifier(feat_re), re_y)
 
             loss.backward()
             opt.step()
@@ -238,7 +250,7 @@ def train_task(
         if (ep + 1) % 10 == 0 and hasattr(buffer, "wgf_refine"):
             buffer.wgf_refine()
 
-    # ------------- validation -----------------------------------------------
+    # ------------------- validation ------------------------------------------
     vloader = DataLoader(val_ds, batch_size=256, shuffle=False, num_workers=2)
     backbone.eval(); classifier.eval()
     correct = 0; total = 0
