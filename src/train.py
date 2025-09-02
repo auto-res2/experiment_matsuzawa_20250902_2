@@ -1,238 +1,252 @@
-"""src/train.py
-Training-related modules: model definitions, replay buffer, and the per-task
-training loop.
-"""
-from __future__ import annotations
-
+"""src/train.py – model definitions, buffers and training routine"""
+import io
 import math
 import random
-import time
-import os  # Added: required for os.cpu_count()
-from pathlib import Path
 from typing import List, Tuple
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torchvision.models import resnet18
-
-# Third-party
-import geotorch  # Stiefel/orthogonal constraints
+import geotorch
 
 # -----------------------------------------------------------------------------
-# Device helper – defined once and re-used everywhere
+# Device helper ----------------------------------------------------------------
 # -----------------------------------------------------------------------------
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # -----------------------------------------------------------------------------
-# Backbone – ResNet-18 with Stiefel-regularised last block
+# Back-bone --------------------------------------------------------------------
 # -----------------------------------------------------------------------------
-class ResNet18_Stiefel(nn.Module):
-    """ResNet-18 whose last convolution block is constrained to be orthogonal.
-    The final FC layer is removed so that the network outputs a 512-D feature
-    vector that downstream heads can freely use.
-    """
+class ResNet18Stiefel(nn.Module):
+    """ResNet-18 whose last conv layer is Stiefel–orthogonalised (geotorch)."""
 
-    def __init__(self, pretrained: bool = True) -> None:
+    def __init__(self):
         super().__init__()
-        # ``weights`` is the recommended API from torchvision>=0.13
-        self.resnet = resnet18(weights="IMAGENET1K_V1" if pretrained else None)
-        # Keep feature dimension, replace classifier with identity
-        self.feature_dim = self.resnet.fc.in_features
-        self.resnet.fc = nn.Identity()
-        # Orthogonalise the convolution weights of the last residual block
-        geotorch.orthogonal(self.resnet.layer4[-1].conv2, "weight")
+        self.net = resnet18(weights="IMAGENET1K_V1")
+        feat_dim = self.net.fc.in_features
+        self.net.fc = nn.Identity()  # remove classifier – we add a task-specific one later
+        # Orthogonal constraint on the last residual block for near-isometry
+        geotorch.orthogonal(self.net.layer4[-1].conv2, "weight")
+        self.feat_dim = feat_dim
 
-    # ------------------------------------------------------------------
-    def forward(self, x: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
-        return self.resnet(x)
-
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # (B, C, H, W) → (B, 512)
+        return self.net(x)
 
 # -----------------------------------------------------------------------------
-# Elastic Feature-Sketch Buffer components
+# Elastic-Feature-Sketch components -------------------------------------------
 # -----------------------------------------------------------------------------
-class OnlineVQEncoder(nn.Module):
-    """Light-weight vector-quantiser that operates directly in feature space."""
+class OnlineVQ(nn.Module):
+    """Single-layer vector-quantiser working directly in feature space."""
 
-    def __init__(self, in_dim: int, code_len: int = 8, k: int = 256) -> None:
+    def __init__(self, feat_dim: int, code_len: int = 8, k: int = 256):
         super().__init__()
         self.code_len = code_len
-        self.k = k
-        self.embed = nn.Embedding(k, in_dim)
-        self.proj_down = nn.Linear(in_dim, in_dim // 2)
-        self.proj_up = nn.Linear(in_dim // 2, in_dim)
+        self.embed = nn.Embedding(k, feat_dim)
         nn.init.uniform_(self.embed.weight, -1, 1)
 
-    # ------------------------------------------------------------------
     @torch.no_grad()
-    def encode(self, z: torch.Tensor) -> torch.Tensor:
-        # z : [B, D]
-        flat = z / (z.norm(dim=1, keepdim=True) + 1e-8)
-        dist = (
-            flat.pow(2).sum(1, keepdim=True)
-            - 2 * flat @ self.embed.weight.T
-            + self.embed.weight.pow(2).sum(1)
-        )
-        return dist.argmin(-1)  # [B]
+    def encode(self, z: torch.Tensor) -> torch.Tensor:  # (B, D) → (B,)
+        z_n = F.normalize(z, dim=1)
+        emb_n = F.normalize(self.embed.weight, dim=1)
+        sims = torch.einsum("bd,kd->bk", z_n, emb_n)
+        return sims.argmax(dim=1).to(torch.int64)
 
-    # ------------------------------------------------------------------
-    def decode(self, codes: torch.Tensor) -> torch.Tensor:  # noqa: D401
+    def decode(self, codes: torch.Tensor) -> torch.Tensor:  # (B,) → (B, D)
         return self.embed(codes)
 
 
 class ReservoirItem:
-    """Simple struct to hold one buffer element."""
+    """Light-weight container – stored in Python list to avoid Torch autograd."""
 
-    __slots__ = ("codes", "y", "infl")
+    __slots__ = ("code", "y", "infl")
 
-    def __init__(self, codes: torch.Tensor, y: int, infl: float) -> None:
-        self.codes, self.y, self.infl = codes, y, infl
+    def __init__(self, code: int, label: int, infl: float):
+        self.code, self.y, self.infl = int(code), int(label), float(infl)
 
 
 class EFSBuffer:
-    """Gradient-aware reservoir sampling buffer with byte-level budget."""
+    """Elastic Feature-Sketching replay buffer (sub-linear memory growth)."""
 
-    def __init__(self, in_dim: int, B_max: int = 1_000_000, code_len: int = 8) -> None:
-        self.max_bytes = B_max
-        self.code_len = code_len  # bytes per code (each code index → 1 byte)
-        self.label_bytes = 2      # uint16 label
-        self.bytes_used = 0
+    def __init__(self, feat_dim: int, B_max: int, code_len: int = 8):
+        self.code_len = code_len
+        self.B_max = B_max
+        self.label_B = 2  # uint16 for class id
+        self.cb_ptr_B = 1  # book-keeping pointer per sample
+        self.bytes = 0
         self.items: List[ReservoirItem] = []
-        self.encoder = OnlineVQEncoder(in_dim, code_len)
+        self.vq = OnlineVQ(feat_dim, code_len)
 
-    # ------------------------ helpers ------------------------
+    # ----------------- helpers ------------------------------------------------
     def _sample_cost(self) -> int:
-        return self.code_len + self.label_bytes
+        """Return bytes required for a single stored example."""
+        return math.ceil(self.code_len / 8) + self.label_B + self.cb_ptr_B
 
-    # -------------------- public API -------------------------
-    def observe(self, feat: torch.Tensor, y: torch.Tensor, infl: torch.Tensor) -> None:
-        """Observe *one minibatch* of features and update the reservoir."""
-        assert feat.ndim == 2, "Features must be flattened [B, D]"
-        codes = self.encoder.encode(feat.cpu())
-        for c, yy, inf in zip(codes, y.cpu(), infl.cpu()):
-            if self.bytes_used + self._sample_cost() > self.max_bytes:
-                # Replace an existing sample if the new one has higher influence
-                idx = torch.randint(0, len(self.items), (1,)).item()
-                if inf > self.items[idx].infl:
-                    self.bytes_used -= self._sample_cost()
-                    self.items[idx] = ReservoirItem(c, int(yy), float(inf))
-                    self.bytes_used += self._sample_cost()
+    # ----------------- public API --------------------------------------------
+    def observe(self, feats: torch.Tensor, y: torch.Tensor, infl: torch.Tensor):
+        """Insert (feature, label, influence) triplets with reservoir replacement."""
+        codes = self.vq.encode(feats.cpu())
+        for c, yy, ii in zip(codes, y.cpu(), infl.cpu()):
+            if self.bytes + self._sample_cost() > self.B_max:
+                # influence-biased reservoir sampling
+                j = random.randrange(len(self.items))
+                if ii > self.items[j].infl:
+                    self.items[j] = ReservoirItem(c, yy, ii)
             else:
-                self.items.append(ReservoirItem(c, int(yy), float(inf)))
-                self.bytes_used += self._sample_cost()
+                self.items.append(ReservoirItem(c, yy, ii))
+                self.bytes += self._sample_cost()
+        # ------------ invariants --------------------------------------------
+        assert self.bytes <= self.B_max + self._sample_cost(), "buffer budget over-run"
 
-    # ------------------------------------------------------------------
     def sample(self, k: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        assert len(self) >= k, "Not enough samples in buffer"
-        idx = np.random.choice(len(self.items), size=k, replace=False)
-        codes = torch.tensor([self.items[i].codes for i in idx], dtype=torch.long)
-        ys = torch.tensor([self.items[i].y for i in idx], dtype=torch.long)
-        feats = self.encoder.decode(codes).detach()
+        idx = torch.randint(len(self.items), (k,))
+        codes = torch.tensor([self.items[i].code for i in idx])
+        ys = torch.tensor([self.items[i].y for i in idx])
+        feats = self.vq.decode(codes)
         return feats, ys
 
-    # ------------------------------------------------------------------
-    def wgf_refine(self, step_size: float = 0.1) -> None:
-        """One step of SVGD-style refinement in embedding space."""
-        if len(self) == 0:
+    def wgf_refine(self, step: float = 0.1):
+        """Light-weight Wasserstein gradient flow refinement."""
+        if not self.items:
             return
-        codes = torch.stack([it.codes for it in self.items])
-        embeds = self.encoder.decode(codes)
-        grad = torch.autograd.grad(
-            outputs=embeds.norm(2, 1).mean(),
-            inputs=self.encoder.embed.weight,
-            retain_graph=False,
-            create_graph=False,
-        )[0]
+        codes = torch.tensor([it.code for it in self.items])
+        emb = self.vq.decode(codes)
+        loss = emb.norm(p=2, dim=1).mean()
+        grad = torch.autograd.grad(loss, self.vq.embed.weight, retain_graph=False)[0]
         with torch.no_grad():
-            self.encoder.embed.weight += step_size * grad
+            self.vq.embed.weight += step * grad
 
-    # ------------------------------------------------------------------
-    def __len__(self) -> int:  # noqa: D401
+    # Python built-ins ---------------------------------------------------------
+    def __len__(self):
+        return len(self.items)
+
+# -----------------------------------------------------------------------------
+# Baseline buffers -------------------------------------------------------------
+# -----------------------------------------------------------------------------
+class RawImageBuffer:
+    """Exact replay of raw inputs (JPEG compressed). FIFO once budget is full."""
+
+    def __init__(self, B_max: int, jpeg_quality: int = 90):
+        self.B_max = B_max
+        self.jpeg_q = jpeg_quality
+        self.items: List[Tuple[bytes, int]] = []  # (jpeg_bytes, label)
+        self.bytes = 0
+
+    # internal helpers --------------------------------------------------------
+    def _encode(self, img: torch.Tensor) -> bytes:
+        from PIL import Image
+        arr = (img.cpu().permute(1, 2, 0).numpy() * 255).astype("uint8")
+        im = Image.fromarray(arr)
+        buf = io.BytesIO()
+        im.save(buf, format="JPEG", quality=self.jpeg_q)
+        return buf.getvalue()
+
+    # public API --------------------------------------------------------------
+    def observe(self, x: torch.Tensor, y: torch.Tensor, *_):
+        for img, yy in zip(x, y):
+            enc = self._encode(img)
+            sz = len(enc) + 2  # label uint16
+            if self.bytes + sz > self.B_max:
+                continue  # drop newest once full (ER-Raw FIFO policy)
+            self.items.append((enc, int(yy)))
+            self.bytes += sz
+
+    def sample(self, k: int):
+        import numpy as np
+        from PIL import Image, ImageFile
+        from torchvision import transforms
+
+        ImageFile.LOAD_TRUNCATED_IMAGES = True
+        idx = np.random.choice(len(self.items), size=k, replace=False)
+        xs, ys = [], []
+        to_tensor = transforms.ToTensor()
+        for i in idx:
+            img_b, yy = self.items[i]
+            xs.append(to_tensor(Image.open(io.BytesIO(img_b))))
+            ys.append(yy)
+        return torch.stack(xs), torch.tensor(ys)
+
+    def __len__(self):
         return len(self.items)
 
 
+class RingBuffer(RawImageBuffer):
+    """Class-balanced ring buffer as in ER-Ring."""
+
+    def observe(self, x: torch.Tensor, y: torch.Tensor, *_):
+        for img, yy in zip(x, y):
+            enc = self._encode(img)
+            sz = len(enc) + 2
+            while self.bytes + sz > self.B_max and self.items:
+                old, _ = self.items.pop(0)
+                self.bytes -= len(old) + 2
+            self.items.append((enc, int(yy)))
+            self.bytes += sz
+
 # -----------------------------------------------------------------------------
-# Training loop for a single continual-learning task
+# Training routine ------------------------------------------------------------
 # -----------------------------------------------------------------------------
 
-def train_single_task(
+def train_task(
     backbone: nn.Module,
     classifier: nn.Module,
-    buffer: EFSBuffer,
+    buffer,
     train_ds,
     val_ds,
     *,
-    epochs: int = 10,
-    batch_size: int = 128,
-    replay_ratio: float = 0.5,
-) -> float:
-    """Train one task and return validation accuracy."""
-
+    epochs: int = 200,
+    replay_r: float = 0.5,
+):
+    """Train a single continual-learning task and optionally replay from buffer."""
     backbone.to(DEVICE)
     classifier.to(DEVICE)
-    backbone.train()
-    classifier.train()
 
-    optimiser = torch.optim.SGD(
+    opt = torch.optim.SGD(
         list(backbone.parameters()) + list(classifier.parameters()),
         lr=0.1,
         momentum=0.9,
         weight_decay=5e-4,
     )
-    sched = torch.optim.lr_scheduler.CosineAnnealingLR(optimiser, T_max=epochs)
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs)
 
-    loader = DataLoader(
-        train_ds,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=min(4, os.cpu_count() or 1),
-        pin_memory=torch.cuda.is_available(),
-    )
-
-    # Deferred import to avoid circular dependency at module level
-    from .evaluate import evaluate  # pylint: disable=import-outside-toplevel
-
+    loader = DataLoader(train_ds, batch_size=128, shuffle=True, num_workers=2)
     for ep in range(epochs):
-        ep_loss, n_samples = 0.0, 0
         for x, y in loader:
-            x = x.to(DEVICE, non_blocking=True)
-            y = y.to(DEVICE, non_blocking=True)
+            x, y = x.to(DEVICE), y.to(DEVICE)
+            opt.zero_grad()
 
-            optimiser.zero_grad(set_to_none=True)
-            feat = backbone(x)
-            out = classifier(feat)
-            loss_main = F.cross_entropy(out, y)
+            feats = backbone(x)
+            out = classifier(feats)
+            loss = F.cross_entropy(out, y)
 
-            # Influence score for reservoir replacement (norm of logits)
-            infl = out.detach().norm(dim=1)
-            buffer.observe(feat.detach().cpu(), y.cpu(), infl.cpu())
+            # store influence-weighted samples in buffer ----------------------
+            infl = out.detach().norm(p=2, dim=1)
+            buffer.observe(feats.detach(), y.detach().cpu(), infl.cpu())
 
-            # -------------------- Replay --------------------
-            if len(buffer) >= int(batch_size * replay_ratio):
-                feat_rep, y_rep = buffer.sample(int(batch_size * replay_ratio))
-                feat_rep = feat_rep.to(DEVICE)
-                y_rep = y_rep.to(DEVICE)
-                out_rep = classifier(feat_rep)
-                loss_rep = F.cross_entropy(out_rep, y_rep)
-                loss = loss_main + loss_rep
-            else:
-                loss = loss_main
+            # replay ----------------------------------------------------------
+            replay_bs = int(128 * replay_r)
+            if len(buffer) >= replay_bs > 0:
+                re_f, re_y = buffer.sample(replay_bs)
+                re_f, re_y = re_f.to(DEVICE), re_y.to(DEVICE)
+                loss += F.cross_entropy(classifier(re_f), re_y)
 
             loss.backward()
-            optimiser.step()
-
-            ep_loss += loss.item() * x.size(0)
-            n_samples += x.size(0)
-
+            opt.step()
         sched.step()
-
-        # Every 10 epochs, print and refine
-        if (ep + 1) % 10 == 0:
-            print(f"    epoch {ep + 1}/{epochs} | loss {(ep_loss / n_samples):.4f}")
+        # coarse-grained Wasserstein refinement
+        if (ep + 1) % 10 == 0 and hasattr(buffer, "wgf_refine"):
             buffer.wgf_refine()
 
-    # ------------------------------------------------------------------
-    acc = evaluate(backbone, classifier, val_ds)
-    return acc
+    # ------------- validation -----------------------------------------------
+    vloader = DataLoader(val_ds, batch_size=256, shuffle=False, num_workers=2)
+    backbone.eval(); classifier.eval()
+    correct = 0; total = 0
+    with torch.no_grad():
+        for x, y in vloader:
+            x, y = x.to(DEVICE), y.to(DEVICE)
+            preds = classifier(backbone(x)).argmax(1)
+            correct += (preds == y).sum().item()
+            total += y.size(0)
+    backbone.train(); classifier.train()
+    return 100 * correct / total

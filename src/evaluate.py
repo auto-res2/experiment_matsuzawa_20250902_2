@@ -1,116 +1,197 @@
-"""src/evaluate.py
-Model evaluation utilities, statistical analysis, and experiment scripts.
-"""
-from __future__ import annotations
-
-import itertools
-import os
+"""src/evaluate.py – experimental loops, statistics & plotting"""
 from pathlib import Path
-from typing import List
+import os
+import time
+from typing import Dict, Any
 
-import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 import seaborn as sns
-import torch
-from torch.utils.data import DataLoader
+from avalanche.benchmarks.classic import RotatedMNIST
 
-# Local imports (no top-level train import to avoid circular dependency)
-from .preprocess import DATA_DIR, SplitCIFAR100
-from .train import DEVICE, EFSBuffer, ResNet18_Stiefel, train_single_task
+from .preprocess import (
+    DATA_DIR,
+    OUT_DIR,
+    SEEDS,
+    set_seed,
+    SplitCIFAR100,
+)
+from .train import (
+    ResNet18Stiefel,
+    EFSBuffer,
+    RawImageBuffer,
+    RingBuffer,
+    train_task,
+)
 
-# -----------------------------------------------------------------------------
-# Simple accuracy evaluation on a held-out set
-# -----------------------------------------------------------------------------
-
-def evaluate(backbone: torch.nn.Module, classifier: torch.nn.Module, ds) -> float:
-    """Return top-1 accuracy (%) on *ds*."""
-    backbone.eval()
-    classifier.eval()
-    loader = DataLoader(
-        ds,
-        batch_size=256,
-        shuffle=False,
-        num_workers=min(4, os.cpu_count() or 1),
-        pin_memory=torch.cuda.is_available(),
-    )
-    correct = 0
-    total = 0
-    with torch.no_grad():
-        for x, y in loader:
-            x = x.to(DEVICE, non_blocking=True)
-            y = y.to(DEVICE, non_blocking=True)
-            logits = classifier(backbone(x))
-            preds = logits.argmax(1)
-            correct += (preds == y).sum().item()
-            total += y.size(0)
-    return 100.0 * correct / total
+# --------------------------------------------------------------------------------
+# 1) Memory budget experiment -----------------------------------------------------
+# --------------------------------------------------------------------------------
+BUDGETS: Dict[str, int] = {"0.5MB": 512_000, "1MB": 1_024_000, "2MB": 2_048_000}
+METHODS = {"EFS": EFSBuffer, "ER_RAW": RawImageBuffer, "ER_RING": RingBuffer}
 
 
-# -----------------------------------------------------------------------------
-# Experiment-1  :  Accuracy vs Memory Budget
-# -----------------------------------------------------------------------------
-RESULTS_COLS = ["dataset", "budget", "seed", "method", "AACC"]
+def run_exp1():
+    """Experiment-1: Accuracy vs memory budget on Split CIFAR-100."""
+    print("\n========== EXPERIMENT-1  (Byte-Budget vs Accuracy) ==========")
+    out = OUT_DIR / "exp1_byte_budget"
+    out.mkdir(exist_ok=True, parents=True)
 
-BUDGETS = {"0.5MB": 500_000, "1MB": 1_000_000, "2MB": 2_000_000}
+    quick = os.getenv("QUICK", "1") == "1"
+    datasets = [("cifar100", SplitCIFAR100)]  # can be extended with miniImageNet, Tiny-ImageNet
 
-
-def run_exp1(out_dir: Path) -> None:
-    out_dir.mkdir(parents=True, exist_ok=True)
-    results: List[tuple] = []
-
-    for dataset_name in ["cifar100"]:
+    results = []
+    for dname, DCls in datasets:
         for budget_name, B in BUDGETS.items():
-            for seed in [11, 17]:  # Reduced seeds for demo purposes
+            seeds = [SEEDS[0]] if quick else SEEDS
+            for seed in seeds:
+                set_seed(seed)
+                stream = DCls(DATA_DIR, seed)
 
-                print("\n==============================")
-                print(f"Experiment-1 | {dataset_name} | budget {budget_name} | seed {seed}")
+                # one frozen backbone shared across methods ------------------
+                backbone = ResNet18Stiefel()
+                buffer_objs: Dict[str, Any] = {}
+                for m, cls in METHODS.items():
+                    if m == "EFS":
+                        buffer_objs[m] = cls(backbone.feat_dim, B)
+                    else:
+                        buffer_objs[m] = cls(B)
 
-                # ---------------- Dataset stream ----------------
-                if dataset_name == "cifar100":
-                    stream = SplitCIFAR100(DATA_DIR, seed)
-                    n_tasks = 20
-                else:
-                    raise ValueError(f"Unknown dataset {dataset_name}")
-
-                # Build shared backbone and buffer
-                backbone = ResNet18_Stiefel()
-                buffer = EFSBuffer(backbone.feature_dim, B_max=B)
-
-                task_acc: List[float] = []
-                for t in range(n_tasks):
-                    tr_ds, val_ds, cls = stream.get_task_datasets(t)
-                    classifier = torch.nn.Linear(backbone.feature_dim, len(cls)).to(DEVICE)
-                    acc = train_single_task(
-                        backbone,
-                        classifier,
-                        buffer,
-                        tr_ds,
-                        val_ds,
-                        epochs=5,  # fewer epochs for a lightweight demo
-                        batch_size=128,
+                task_acc = {m: [] for m in METHODS}
+                num_tasks = 3 if quick else 20
+                for t in range(num_tasks):
+                    tr, val, _, cls = stream.get_task(t)
+                    for m, buff in buffer_objs.items():
+                        clf = torch.nn.Linear(backbone.feat_dim, len(cls))
+                        acc = train_task(
+                            backbone,
+                            clf,
+                            buff,
+                            tr,
+                            val,
+                            epochs=3 if quick else 200,
+                            replay_r=0.5,
+                        )
+                        task_acc[m].append(acc)
+                        print(
+                            f"[{dname}|{budget_name}|seed{seed}|{m}] task{t:02d} acc={acc:.2f}% buffer={len(buff)} items"
+                        )
+                for m in METHODS:
+                    AACC = np.mean(task_acc[m])
+                    results.append(
+                        dict(dataset=dname, budget=budget_name, seed=seed, method=m, AACC=AACC)
                     )
-                    task_acc.append(acc)
-                    print(
-                        f"Task {t:02d} acc {acc:.2f}% | buffer {len(buffer)} samples | {buffer.bytes_used} bytes"
-                    )
 
-                AACC = sum(task_acc) / len(task_acc)
-                print(f"Final AACC {AACC:.2f}%")
-                results.append((dataset_name, budget_name, seed, "EFS", AACC))
+    df = pd.DataFrame(results)
+    df.to_csv(out / "results.csv", index=False)
 
-    # ---------------- Aggregate & save ----------------
-    df = pd.DataFrame(results, columns=RESULTS_COLS)
-    csv_path = out_dir / "exp1_results.csv"
-    df.to_csv(csv_path, index=False)
-
-    # ---------------- Plotting ----------------
+    # ------------- plot ---------------------------------------------------------
     plt.figure(figsize=(6, 4))
-    sns.barplot(data=df, x="budget", y="AACC", hue="dataset")
+    sns.barplot(data=df, x="budget", y="AACC", hue="method")
     for i, r in df.iterrows():
-        plt.text(i, r.AACC + 0.5, f"{r.AACC:.1f}", ha="center")
+        plt.text(i, r.AACC + 0.3, f"{r.AACC:.1f}", ha="center", fontsize=8)
     plt.ylabel("Average Accuracy (%)")
-    plt.title("Experiment-1: Accuracy vs Memory Budget")
+    plt.title("Accuracy vs Memory Budget – Split CIFAR-100")
     plt.legend()
-    fig_path = out_dir / "accuracy_budget.pdf"
+    fig_path = out / "accuracy_budget.pdf"
     plt.savefig(fig_path, bbox_inches="tight")
-    print(f"Saved figure → {fig_path.relative_to(out_dir.parent)}")
+    print("Figure saved:", fig_path.name)
+
+# --------------------------------------------------------------------------------
+# 2) Long-stream Rotated-MNIST experiment -----------------------------------------
+# --------------------------------------------------------------------------------
+
+def run_exp2():
+    print("\n========== EXPERIMENT-2  (50-Task Long-Stream) ==========")
+    out = OUT_DIR / "exp2_long_stream"
+    out.mkdir(exist_ok=True, parents=True)
+
+    quick = os.getenv("QUICK", "1") == "1"
+    B = 1_024_000
+    methods = ["EFS", "ER_RING", "ER_RAW"]
+
+    records = []
+    seeds = [SEEDS[0]] if quick else SEEDS
+    for seed in seeds:
+        set_seed(seed)
+        stream = RotatedMNIST(n_rotations=50, seed=seed)
+        backbone = ResNet18Stiefel()
+        buffers = {
+            m: (
+                EFSBuffer(backbone.feat_dim, B)
+                if m == "EFS"
+                else RingBuffer(B)
+                if m == "ER_RING"
+                else RawImageBuffer(B)
+            )
+            for m in methods
+        }
+        acc_hist = {m: [] for m in methods}
+        for task_id, benchmark_task in enumerate(stream.train_stream):
+            tr_ds = benchmark_task.dataset
+            val_ds = stream.test_stream[task_id].dataset
+            for m, buff in buffers.items():
+                clf = torch.nn.Linear(backbone.feat_dim, 10)
+                acc = train_task(
+                    backbone,
+                    clf,
+                    buff,
+                    tr_ds,
+                    val_ds,
+                    epochs=1 if quick else 50,
+                    replay_r=0.5,
+                )
+                acc_hist[m].append(acc)
+            if quick and task_id == 2:
+                break  # shorten for CI
+
+        for m in methods:
+            records.append(dict(seed=seed, method=m, final_acc=np.mean(acc_hist[m])))
+
+    pd.DataFrame(records).to_csv(out / "results.csv", index=False)
+
+# --------------------------------------------------------------------------------
+# 3) Ablation study ---------------------------------------------------------------
+# --------------------------------------------------------------------------------
+
+def run_exp3():
+    print("\n========== EXPERIMENT-3  (Ablation & Robustness) ==========")
+    out = OUT_DIR / "exp3_ablation"
+    out.mkdir(exist_ok=True, parents=True)
+
+    quick = os.getenv("QUICK", "1") == "1"
+    variants = {
+        "full": dict(wgf=True, subcb=True),
+        "no_wgf": dict(wgf=False, subcb=True),
+        "no_sub": dict(wgf=True, subcb=False),
+        "plain": dict(wgf=False, subcb=False),
+    }
+
+    seed = SEEDS[0]
+    set_seed(seed)
+    stream = SplitCIFAR100(DATA_DIR, seed)
+    backbone = ResNet18Stiefel()
+    B = 1_024_000
+
+    res = []
+    num_tasks = 3 if quick else 20
+    for name, _ in variants.items():
+        buf = EFSBuffer(backbone.feat_dim, B)
+        task_acc = []
+        for t in range(num_tasks):
+            tr, val, _, cls = stream.get_task(t)
+            clf = torch.nn.Linear(backbone.feat_dim, len(cls))
+            acc = train_task(
+                backbone,
+                clf,
+                buf,
+                tr,
+                val,
+                epochs=2 if quick else 200,
+                replay_r=0.5,
+            )
+            task_acc.append(acc)
+        res.append(dict(variant=name, AACC=np.mean(task_acc)))
+
+    pd.DataFrame(res).to_csv(out / "results.csv", index=False)
