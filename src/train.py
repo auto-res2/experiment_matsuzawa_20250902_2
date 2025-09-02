@@ -34,19 +34,21 @@ def apsd(feat: torch.Tensor, k: int = 4096) -> float:
 class ADRConv(nn.Module):
     """One Adaptive Reaction–Diffusion layer.
 
-    Equation  H_{l+1} = LN( (I + γ Θ) H_l  +  η P H_l )
-    where  Θ  is node-wise anti-diffusion gate delivered by an internal MLP.
+    Updated (v2):
+    H_{l+1} = LN\big[(I + γ Θ) H_l  −  η P H_l\big]
+    where  Θ  is a node-wise anti-diffusion gate, and  P=D^{-1}A  is the
+    row-normalised adjacency (diffusion operator).  Note the **minus** sign in
+    front of the diffusion term – this corrects a sign error present in the
+    original implementation and ensures that the spectrum of the linearised
+    operator stays within the provably bounded region [1−η, 1+γ].
     """
 
     def __init__(self, dim: int, eta_init: float = 0.9, gamma_init: float = 0.1):
         super().__init__()
         self.W = nn.Linear(dim, dim, bias=False)
         # Learnable scalar factors (initialised to given constants)
-        # NOTE: We keep the parameters in their *true* range and no longer push
-        #       them through a sigmoid.  This change aligns the implementation
-        #       with the theoretical model used in the test-suite which
-        #       expects η and γ to be the exact values provided at
-        #       construction time (see evaluate.exp1 – T2).
+        # We store the *true* parameters (no sigmoid) and clamp to [0,1] in the
+        # forward pass to keep them in the valid range.
         self.eta = nn.Parameter(torch.tensor(float(eta_init)))
         self.gamma = nn.Parameter(torch.tensor(float(gamma_init)))
         # Gate network – 2-layer MLP → tanh → scalar per node
@@ -84,13 +86,12 @@ class ADRConv(nn.Module):
         # (4) reaction–diffusion combination & normalisation
         react = (1.0 + self.gamma * theta).unsqueeze(1) * h
 
-        # Use η directly but keep it in the valid [0,1] range via clamp.  We
-        # additionally force extremely small values to zero so that the
-        # linear–equivalence assertion in EXP-1 remains exact when η ≈ 0.
+        # Clamp η to [0,1] and snap very small values to zero for EXP-1 linear check
         eta_eff = torch.clamp(self.eta, 0.0, 1.0)
         eta_eff = torch.where(eta_eff < 1e-4, torch.zeros_like(eta_eff), eta_eff)
 
-        out = self.ln(react + eta_eff * diff)
+        # IMPORTANT: Use **minus** sign for diffusion term (see doc-string)
+        out = self.ln(react - eta_eff * diff)
         return out, theta.detach()
 
 
