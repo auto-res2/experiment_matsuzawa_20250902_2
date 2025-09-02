@@ -6,5 +6,82 @@
     "invariant risk minimization",
     "domain generalization",
     "robust image classification"
+  ],
+  "research_study_list": [
+    {
+      "title": "Seeing is not Believing: Robust Reinforcement Learning against Spurious Correlation"
+    },
+    {
+      "title": "A Causal Framework for Decomposing Spurious Variations"
+    },
+    {
+      "title": "Examining and Combating Spurious Features under Distribution Shift"
+    },
+    {
+      "title": "Contextual Reliability: When Different Features Matter in Different Contexts"
+    },
+    {
+      "title": "Causal Effect Regularization: Automated Detection and Removal of Spurious Correlations"
+    },
+    {
+      "title": "Models Out of Line: A Fourier Lens on Distribution Shift Robustness"
+    },
+    {
+      "title": "On the Adversarial Robustness of Out-of-distribution Generalization Models"
+    },
+    {
+      "title": "OODRobustBench: a Benchmark and Large-Scale Analysis of Adversarial Robustness under Distribution Shift"
+    },
+    {
+      "title": "Towards neural networks that provably know when they don't know"
+    },
+    {
+      "title": "Certifiably Adversarially Robust Detection of Out-of-Distribution Data"
+    },
+    {
+      "title": "Invariant Risk Minimization Is A Total Variation Model"
+    },
+    {
+      "title": "The Missing Invariance Principle found --  the Reciprocal Twin of Invariant Risk Minimization "
+    },
+    {
+      "title": "Sparse Invariant Risk Minimization"
+    },
+    {
+      "title": "Sparse Invariant Risk Minimization"
+    },
+    {
+      "title": "The Risks of Invariant Risk Minimization"
+    },
+    {
+      "title": "Domain Invariant Representation Learning with Domain Density Transformations"
+    },
+    {
+      "title": "Domain Generalization via Entropy Regularization"
+    },
+    {
+      "title": "Improving Generalization With Domain Convex Game"
+    },
+    {
+      "title": "In Search of Lost Domain Generalization"
+    },
+    {
+      "title": "Adversarially Robust Models may not Transfer Better: Sufficient Conditions for Domain Transferability from the View of Regularization"
+    },
+    {
+      "title": "Vector Quantization With Self-Attention for Quality-Independent Representation Learning"
+    },
+    {
+      "title": "Fundamental limits on the robustness of image classifiers"
+    },
+    {
+      "title": "Optimizing Relevance Maps of Vision Transformers Improves Robustness"
+    },
+    {
+      "title": "Robust Quantization: One Model to Rule Them All"
+    },
+    {
+      "title": "Contemplating Real-World Object Classification"
+    }
   ]
 }
