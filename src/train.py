@@ -1,3 +1,4 @@
+````python
 """
 train.py – model architectures, memory buffers, training utilities
 """
@@ -110,7 +111,8 @@ class HOFQBuffer:
     def train_c0(self, feats: torch.Tensor):
         """(Offline) k-means on first task features to initialise C0."""
         km = MiniBatchKMeans(256, batch_size=512, max_iter=25).fit(feats.cpu().numpy())
-        self.c0.copy_(torch.tensor(km.cluster_centers_))
+        # Ensure dtype matches self.c0 to avoid ``copy_`` mismatch errors.
+        self.c0.copy_(torch.tensor(km.cluster_centers_, dtype=self.c0.dtype))
 
     def new_task(self):
         self.ct.append(torch.randn(64, self.c0.shape[1]))
@@ -207,3 +209,4 @@ def train_task(model: ResNet18, loader: torch.utils.data.DataLoader, opt: optim.
         # budget check ---------------------------------------------------------------
         if buf is not None:
             assert_memory(buf.bytes)
+````

@@ -1,3 +1,4 @@
+````python
 """
 evaluate.py – utilities for evaluation, statistics and plotting
 """
@@ -78,25 +79,46 @@ def _train_linear_probe(model: ResNet18, loader: DataLoader, seed: int):
             x = x.to(DEVICE, non_blocking=True)
             feats_lst.append(model.backbone(x).cpu())
             lbls_lst.append(y.cpu())
-    feats = torch.cat(feats_lst).numpy()
+    feats = torch.cat(feats_lst).numpy().astype(np.float32)
     labels = torch.cat(lbls_lst).numpy()
+
+    # ------------------------------------------------------------------
+    # Feature standardisation greatly boosts the performance of the      
+    # linear probe and ensures rapid convergence of the optimiser.       
+    # Instead of relying on an explicit ``StandardScaler`` layer at      
+    # inference time, we absorb the normalisation statistics into the    
+    # linear layer weights so that the deployed model remains a simple   
+    # ``nn.Linear`` module.                                              
+    # ------------------------------------------------------------------
+    mean = feats.mean(axis=0, keepdims=True)
+    std = feats.std(axis=0, keepdims=True) + 1e-6  # numerical guard
+    feats_std = (feats - mean) / std
 
     # Deterministic & fast linear classifier ---------------------------------------
     clf = LogisticRegression(
-        max_iter=3000,               # ↑ allow solver to fully converge
+        max_iter=2000,
         multi_class="multinomial",
         solver="lbfgs",
-        C=10.0,                      # ↓ weaker regularisation → higher accuracy
+        C=100.0,                    # weaker regularisation → higher accuracy
         random_state=seed,
-        n_jobs=1,  # lightning-fast on 50k×512 ≈ 100 MB
+        n_jobs=1,
     )
-    clf.fit(feats, labels)
+    clf.fit(feats_std, labels)
+
+    # ------------------------------------------------------------------
+    # Absorb feature standardisation into the weight & bias parameters  
+    # so that the deployed PyTorch model receives *raw* backbone         
+    # features.  For a standardisation z = (x-mu)/sigma followed by      
+    # a linear layer w·z + b, the equivalent operation on raw x is:      
+    #            w' = w / sigma                                          
+    #            b' = b - (w * mu) / sigma                               
+    # ------------------------------------------------------------------
+    W = clf.coef_.astype(np.float32) / std
+    b = clf.intercept_.astype(np.float32) - (clf.coef_ * mean / std).sum(axis=1)
 
     # Copy weights to the PyTorch Linear layer (note the order!) -------------------
-    W = torch.tensor(clf.coef_, dtype=torch.float32)
-    b = torch.tensor(clf.intercept_, dtype=torch.float32)
-    model.classifier.weight.data.copy_(W.to(DEVICE))
-    model.classifier.bias.data.copy_(b.to(DEVICE))
+    model.classifier.weight.data.copy_(torch.tensor(W, device=DEVICE))
+    model.classifier.bias.data.copy_(torch.tensor(b, device=DEVICE))
 
 
 def offline_sanity(seed: int = 0, epochs: int = 1):
@@ -291,3 +313,4 @@ def experiment2():
 
 def experiment3():
     print("\nExp-3 stub running – compute/energy + ablation code is in the public repository.")
+````
