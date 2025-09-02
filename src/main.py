@@ -5,6 +5,7 @@ Fixed: graceful fallback when Waterbirds dataset is unavailable.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import time
@@ -113,7 +114,8 @@ def run_experiment_1() -> None:
         # ------------------ Model & optim ------------------
         model = SCaRINet("resnet50", n_classes=2).to(device)
         opt = torch.optim.AdamW(model.parameters(), lr=3e-4, weight_decay=5e-2)
-        scaler = GradScaler()
+        # Ensure GradScaler is a no-op on CPU to avoid runtime errors
+        scaler = GradScaler(enabled=torch.cuda.is_available())
 
         best_val_acc = -1.0
         history_acc, history_wg = [], []
@@ -130,7 +132,9 @@ def run_experiment_1() -> None:
                 for x, y, _meta, _ in tqdm(train_loader, desc="train", leave=False):
                     x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
                     opt.zero_grad(set_to_none=True)
-                    with torch.cuda.amp.autocast():
+                    with (
+                        torch.cuda.amp.autocast() if torch.cuda.is_available() else contextlib.nullcontext()
+                    ):
                         _feat, _proj, logits = model(x)
                         loss = torch.nn.functional.cross_entropy(logits, y)
                     scaler.scale(loss).backward()

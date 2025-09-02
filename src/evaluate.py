@@ -54,7 +54,7 @@ def evaluate(
 # -----------------------------------------------------------------------------
 
 # CI specification: all experiment images must be placed under this directory.
-_SAVE_DIR = Path(".research/iteration9/images")
+_SAVE_DIR = Path(".research/iteration10/images")  # <- updated to match CI rules
 
 
 def save_line_plot(
