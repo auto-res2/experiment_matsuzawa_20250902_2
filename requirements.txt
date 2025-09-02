@@ -4,9 +4,6 @@ torchaudio
 timm>=0.9.2
 diffusers>=0.19.0
 transformers>=4.33.0
-datasets
-domainbed
-opendatasets
 scikit-learn
 pandas
 seaborn

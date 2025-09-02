@@ -65,21 +65,47 @@ def download_url(url: str, dest: Path, desc: str) -> Path:
 
 
 def extract_archive(archive_path: Path, dest_dir: Path):
+    """Extract *tar(.gz/.tgz)* or *zip* archives.
+
+    Previous logic compared suffix strings without the leading dot which
+    caused the Waterbirds *.tar.gz* file to be opened as an un-compressed
+    tar and therefore `tarfile` raised *ReadError: invalid header*.
+    The check now correctly includes the dot and falls back to trying the
+    alternative mode if the first attempt fails.
+    """
     print(f"Extracting {archive_path} …")
-    if dest_dir.exists():
+    # If directory exists *and* is non-empty, assume extraction already done
+    if dest_dir.exists() and any(dest_dir.iterdir()):
         print("Archive already extracted, skipping.")
         return
     dest_dir.mkdir(parents=True, exist_ok=True)
 
-    if archive_path.suffixes[-2:] == [".tar", ".gz"] or archive_path.suffix in {".tar", ".tgz"}:
-        mode = "r:gz" if archive_path.suffixes[-1] == "gz" else "r:"
-        with tarfile.open(archive_path, mode) as tar:
-            tar.extractall(dest_dir)
-    elif archive_path.suffix == ".zip":
-        with zipfile.ZipFile(archive_path, "r") as zf:
-            zf.extractall(dest_dir)
-    else:
-        raise ValueError(f"Unsupported archive format: {archive_path}")
+    try:
+        # ----------------  TAR archives  ----------------
+        if (
+            archive_path.suffixes[-2:] == [".tar", ".gz"]
+            or archive_path.suffix in {".tar", ".tgz"}
+        ):
+            mode = "r:gz" if archive_path.suffixes[-1] == ".gz" or archive_path.suffix == ".tgz" else "r:"
+            try:
+                with tarfile.open(archive_path, mode) as tar:
+                    tar.extractall(dest_dir)
+            except tarfile.ReadError:
+                # Fallback – try without gzip in case of mis-labelled file
+                with tarfile.open(archive_path, "r:") as tar:
+                    tar.extractall(dest_dir)
+        # ----------------  ZIP archives  ----------------
+        elif archive_path.suffix == ".zip":
+            with zipfile.ZipFile(archive_path, "r") as zf:
+                zf.extractall(dest_dir)
+        else:
+            raise ValueError(f"Unsupported archive format: {archive_path}")
+    except Exception as exc:  # pragma: no cover – any extraction failure
+        # Clean up to allow a fresh retry next run
+        for p in dest_dir.glob("**/*"):
+            p.unlink(missing_ok=True)
+        dest_dir.rmdir()
+        raise exc
 
 # ---------------------------------------------------------------------
 # Dataset wrappers
