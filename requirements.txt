@@ -1,1 +1,19 @@
-# Please list the required python packages.
+torch
+torchvision
+torchaudio
+timm>=0.9.2
+diffusers>=0.19.0
+transformers>=4.33.0
+datasets
+domainbed
+opendatasets
+scikit-learn
+pandas
+seaborn
+matplotlib
+tqdm
+requests
+fvcore
+open_clip_torch
+numpy
+pillow
