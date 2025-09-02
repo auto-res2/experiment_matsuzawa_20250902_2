@@ -41,7 +41,10 @@ class ExperimentRunner:
     # ---------------------------------------------------------------------
     def experiment_depth(self):
         print("\n================ EXPERIMENT 1 – DEPTH-ROBUST ACCURACY & SMOOTHING ================")
-        datasets = ["cora", "chameleon"] if not self.full_run else [
+        datasets = [
+            "cora",
+            "chameleon",
+        ] if not self.full_run else [
             "cora",
             "citeseer",
             "pubmed",
@@ -87,7 +90,13 @@ class ExperimentRunner:
                         train_step(model_b, data, opt_b, masks["train"])
                     accs_b, rd_b, cd_b = evaluate_model(model_b, data, masks)
                     self._log_result(
-                        dname, depth, base.upper(), accs_b["test"], rd_b, cd_b, time.time() - t0_b
+                        dname,
+                        depth,
+                        base.upper(),
+                        accs_b["test"],
+                        rd_b,
+                        cd_b,
+                        time.time() - t0_b,
                     )
         self._plot_depth_curves()
 
@@ -101,6 +110,7 @@ class ExperimentRunner:
 
     # ---------------------------------------------------------------------
     def _plot_depth_curves(self):
+        """Generate & save accuracy-vs-depth plots for each dataset."""
         for dname, models in self.results.items():
             plt.figure(figsize=(6, 4))
             for model_name, depth_dict in models.items():
@@ -111,7 +121,8 @@ class ExperimentRunner:
             plt.xlabel("#Layers")
             plt.ylabel("Accuracy")
             plt.title(f"Depth-Robust Accuracy on {dname.capitalize()}")
-            plt.xscale("log", basex=2)
+            # matplotlib ≥3.3 uses `base` instead of the deprecated `basex/basey`
+            plt.xscale("log", base=2)
             plt.gca().set_xticks(sorted(list({k for m in models.values() for k in m.keys()})))
             plt.legend()
             fname = FIG_DIR / f"accuracy_depth_{dname}.pdf"
