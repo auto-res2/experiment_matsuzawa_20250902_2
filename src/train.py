@@ -1,185 +1,133 @@
+"""src/train.py
+Model architectures and training-related utilities for ADR-GNN experiments.
+"""
 from __future__ import annotations
-import math
-from typing import Dict
+from typing import Tuple, List
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GCNConv, PairNorm
-from torch_geometric.utils import add_self_loops
 
-###############################################################################
-#                                1.  Utilities                                #
-###############################################################################
+# -----------------------------------------------------------------------------
+#  Generic helpers – kept here to avoid circular imports
+# -----------------------------------------------------------------------------
 
-def accuracy(logits: torch.Tensor, labels: torch.Tensor) -> float:
-    """Node classification accuracy in %."""
-    preds = logits.argmax(dim=-1)
-    return (preds == labels).float().mean().item() * 100.0
+def accuracy(logits: torch.Tensor, y: torch.Tensor) -> float:
+    """Return classification accuracy in % (float, not torch Tensor)."""
+    return (logits.argmax(dim=1) == y).float().mean().item() * 100.0
 
 
-def apsd(x: torch.Tensor) -> float:
-    """Average pair-wise squared distance on a (sub-)sample of nodes."""
-    if x.size(0) > 4096:
-        idx = torch.randperm(x.size(0), device=x.device)[:4096]
-        x = x[idx]
-    return (torch.pdist(x, p=2.0) ** 2).mean().item()
+def apsd(feat: torch.Tensor, k: int = 4096) -> float:
+    """Average pairwise squared Euclidean distance on a random subset (≤k).
+    Helps as over-smoothing indicator.  Returns python float for logging.
+    """
+    if feat.size(0) > k:
+        idx = torch.randperm(feat.size(0), device=feat.device)[:k]
+        feat = feat[idx]
+    return (torch.pdist(feat, p=2.0) ** 2).mean().item()
 
-###############################################################################
-#                          2.  ADR-GNN Building Blocks                        #
-###############################################################################
+# -----------------------------------------------------------------------------
+#  ADR-GNN core layers
+# -----------------------------------------------------------------------------
 
 class ADRConv(nn.Module):
-    """Adaptive Reaction–Diffusion layer.
+    """One Adaptive Reaction–Diffusion layer.
 
-    H_{l+1} = LN( (1 + γθ_i) H_l  +  η P H_l ) W_l
-    where θ_i is a learnable node-wise gate produced by a small MLP.
+    Equation  H_{l+1} = LN( (I + γ Θ) H_l  +  η P H_l )
+    where  Θ  is node-wise anti-diffusion gate delivered by an internal MLP.
     """
 
-    def __init__(self, in_dim: int, eta_init: float = 0.9, gamma_init: float = 0.1):
+    def __init__(self, dim: int, eta_init: float = 0.9, gamma_init: float = 0.1):
         super().__init__()
-        self.proj = nn.Linear(in_dim, in_dim, bias=False)
+        self.W = nn.Linear(dim, dim, bias=False)
+        # Learnable scalar factors (initialised to given constants)
         self.eta = nn.Parameter(torch.tensor(float(eta_init)))
         self.gamma = nn.Parameter(torch.tensor(float(gamma_init)))
-        self.mlp = nn.Sequential(
-            nn.Linear(in_dim * 2 + 1, 32),
-            nn.GELU(),
-            nn.Linear(32, 1),
-            nn.Tanh(),
+        # Gate network – 2-layer MLP → tanh → scalar per node
+        self.theta_net = nn.Sequential(
+            nn.Linear(dim * 2 + 1, 32), nn.GELU(), nn.Linear(32, 1), nn.Tanh()
         )
-        self.ln = nn.LayerNorm(in_dim)
+        self.ln = nn.LayerNorm(dim)
 
     def forward(
         self,
-        x: torch.Tensor,
-        x0: torch.Tensor,
+        h: torch.Tensor,
+        h0_raw: torch.Tensor,
         edge_index: torch.Tensor,
-        deg_norm: torch.Tensor,
-    ) -> torch.Tensor:
-        row, col = edge_index  # COO
-        diffused = deg_norm[row].unsqueeze(1) * x[col]
-        diffused = torch.zeros_like(x).scatter_add_(
-            0, row.unsqueeze(1).repeat(1, x.size(1)), diffused
-        )
+        deg_inv: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Forward pass.
+        Returns
+        -------
+        out : torch.Tensor            # node features after layer
+        theta_detached : torch.Tensor # θ values detached from graph (for logging)
+        """
+        # (1) feature projection
+        h = self.W(h)
 
-        gate_in = torch.cat([x0, x, deg_norm.unsqueeze(1)], dim=1)
-        theta = self.mlp(gate_in).squeeze()  # (N,)
-        reaction = (1.0 + self.gamma * theta).unsqueeze(1) * x
-        out = reaction + self.eta * diffused
-        out = self.proj(out)
-        return self.ln(out)
+        # (2) diffusion part   diff = D^{-1} A h
+        row, col = edge_index
+        msg = deg_inv[row].unsqueeze(1) * h[col]
+        diff = torch.zeros_like(h).scatter_add_(0, row.unsqueeze(1).expand_as(msg), msg)
 
-###############################################################################
-#                               3.  GNN Models                                #
-###############################################################################
+        # (3) anti-diffusion gate   Θ_i = tanh( f( x_i^0, h_i , log deg_i ) )
+        deg_log = (deg_inv + 1e-8).log().unsqueeze(1)  # numeric stability
+        gate_in = torch.cat([h0_raw, h.detach(), deg_log], dim=1)
+        theta = self.theta_net(gate_in).squeeze()  # shape (N,)
+
+        # (4) reaction–diffusion combination & normalisation
+        react = (1.0 + self.gamma * theta).unsqueeze(1) * h
+        out = self.ln(react + torch.sigmoid(self.eta) * diff)
+        return out, theta.detach()
+
 
 class ADRGNN(nn.Module):
-    """Our proposed ADR-GNN stack."""
+    """Multi-layer ADR-GNN for node classification."""
 
-    def __init__(self, in_dim: int, hidden: int, num_classes: int, depth: int, dropout: float = 0.6):
+    def __init__(self, in_dim: int, hid: int, n_cls: int, depth: int, dropout: float):
         super().__init__()
-        self.x0: torch.Tensor | None = None
-        self.input_proj = nn.Linear(in_dim, hidden)
-        self.layers = nn.ModuleList([ADRConv(hidden) for _ in range(depth)])
-        self.out_proj = nn.Linear(hidden, num_classes)
-        self.dropout = dropout
+        self.depth = depth
+        self.do = dropout
+        self.in_lin = nn.Linear(in_dim, hid)
+        self.layers = nn.ModuleList([ADRConv(hid) for _ in range(depth)])
+        self.out_lin = nn.Linear(hid, n_cls)
 
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor, deg_norm: torch.Tensor):
-        if self.x0 is None or self.x0.size(0) != x.size(0):
-            self.x0 = x.clone().detach()
-        x = F.dropout(x, p=self.dropout, training=self.training)
-        x = F.relu(self.input_proj(x))
-        x0 = x.clone().detach()
+    def forward(
+        self, x: torch.Tensor, edge_index: torch.Tensor, deg_inv: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        h0_raw = x  # keep initial features for gate MLP
+        h = F.relu(self.in_lin(x))
+        thetas: List[torch.Tensor] = []
         for layer in self.layers:
-            x = layer(x, x0, edge_index, deg_norm)
-            x = F.relu(x)
-            x = F.dropout(x, p=self.dropout, training=self.training)
-        return self.out_proj(x)
+            h, theta = layer(h, h0_raw, edge_index, deg_inv)
+            h = F.dropout(F.relu(h), p=self.do, training=self.training)
+            thetas.append(theta)
+        logits = self.out_lin(h)
+        return logits, torch.stack(thetas)  # (L × N)
 
 
-class VanillaGCN(nn.Module):
-    """PairNorm-regularised vanilla GCN used as baseline."""
+class GCN(nn.Module):
+    """Vanilla GCN (baseline) with optional depth>2 and PairNorm."""
 
-    def __init__(self, in_dim: int, hidden: int, num_classes: int, depth: int = 2, dropout: float = 0.6):
+    def __init__(self, in_dim: int, hid: int, n_cls: int, depth: int, drop: float):
         super().__init__()
         self.convs = nn.ModuleList()
         if depth == 1:
-            self.convs.append(GCNConv(in_dim, num_classes))
+            self.convs.append(GCNConv(in_dim, n_cls))
         else:
-            self.convs.append(GCNConv(in_dim, hidden))
+            self.convs.append(GCNConv(in_dim, hid))
             for _ in range(depth - 2):
-                self.convs.append(GCNConv(hidden, hidden))
-            self.convs.append(GCNConv(hidden, num_classes))
-        self.pairnorm = PairNorm()
-        self.dropout = dropout
+                self.convs.append(GCNConv(hid, hid))
+            self.convs.append(GCNConv(hid, n_cls))
+        self.pn = PairNorm()
+        self.drop = drop
 
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor, *_):
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor, *_):  # ignore deg_inv
         for i, conv in enumerate(self.convs):
             x = conv(x, edge_index)
             if i != len(self.convs) - 1:
                 x = F.relu(x)
-                x = self.pairnorm(x)
-                x = F.dropout(x, p=self.dropout, training=self.training)
-        return x
-
-###############################################################################
-#                          4.  Training / Evaluation                          #
-###############################################################################
-
-def train_model(
-    model: nn.Module,
-    data,
-    optimizer: torch.optim.Optimizer,
-    criterion,
-    train_mask: torch.Tensor,
-    val_mask: torch.Tensor,
-    test_mask: torch.Tensor,
-    epochs: int,
-    patience: int,
-) -> Dict:
-    """Generic training loop with early stopping."""
-    best_val = -1.0
-    best_state = None
-    history: Dict[str, list] = {"train_acc": [], "val_acc": [], "apsd": []}
-    wait = 0
-
-    for epoch in range(1, epochs + 1):
-        # -------------------- train -------------------- #
-        model.train()
-        optimizer.zero_grad()
-        out = model(data.x, data.edge_index, data.deg_norm)
-        loss = criterion(out[train_mask], data.y[train_mask])
-        loss.backward()
-        optimizer.step()
-
-        # -------------------- eval --------------------- #
-        model.eval()
-        with torch.no_grad():
-            logits = model(data.x, data.edge_index, data.deg_norm)
-            tr = accuracy(logits[train_mask], data.y[train_mask])
-            va = accuracy(logits[val_mask], data.y[val_mask])
-            history["train_acc"].append(tr)
-            history["val_acc"].append(va)
-            if epoch % 5 == 0:
-                history["apsd"].append(apsd(logits))
-
-        # ----------------- early stop ------------------ #
-        if va > best_val:
-            best_val = va
-            best_state = {k: v.clone() for k, v in model.state_dict().items()}
-            wait = 0
-        else:
-            wait += 1
-            if wait >= patience:
-                break
-
-    if best_state is None:
-        raise RuntimeError("Training failed to improve")
-
-    model.load_state_dict(best_state)
-    model.eval()
-    with torch.no_grad():
-        logits = model(data.x, data.edge_index, data.deg_norm)
-        history["test_acc"] = accuracy(logits[test_mask], data.y[test_mask])
-    return history
+                x = self.pn(x)
+                x = F.dropout(x, p=self.drop, training=self.training)
+        return x, None

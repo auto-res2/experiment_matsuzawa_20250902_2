@@ -10,4 +10,3 @@ scipy
 scikit_learn
 networkx
 fvcore
-pyyaml
