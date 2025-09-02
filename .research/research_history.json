@@ -6,5 +6,82 @@
     "parameter-efficient incremental learning",
     "continual learning pruning quantization",
     "episodic memory compression CL"
+  ],
+  "research_study_list": [
+    {
+      "title": "Continual Learning in Low-rank Orthogonal Subspaces"
+    },
+    {
+      "title": "Contextual Transformation Networks for Online Continual Learning"
+    },
+    {
+      "title": "Improving Task-free Continual Learning by Distributionally Robust Memory Evolution"
+    },
+    {
+      "title": "Improving Task-free Continual Learning by Distributionally Robust Memory Evolution"
+    },
+    {
+      "title": "SparCL: Sparse Continual Learning on the Edge"
+    },
+    {
+      "title": "Towards Backward-Compatible Continual Learning of Image Compression"
+    },
+    {
+      "title": "Online Learned Continual Compression with Adaptive Quantization Modules"
+    },
+    {
+      "title": "Layerwise Proximal Replay: A Proximal Point Method for Online Continual Learning"
+    },
+    {
+      "title": "EEC: Learning to Encode and Regenerate Images for Continual Learning"
+    },
+    {
+      "title": "Navigating Memory Construction by Global Pseudo-Task Simulation for Continual Learning"
+    },
+    {
+      "title": "SAFE: Slow and Fast Parameter-Efficient Tuning for Continual Learning with Pre-Trained Models"
+    },
+    {
+      "title": "Semantically-Shifted Incremental Adapter-Tuning is A Continual ViTransformer"
+    },
+    {
+      "title": "Memory Efficient Continual Learning with Transformers"
+    },
+    {
+      "title": "InfLoRA: Interference-Free Low-Rank Adaptation for Continual Learning"
+    },
+    {
+      "title": "Parameter-Level Soft-Masking for Continual Learning"
+    },
+    {
+      "title": "Online Learned Continual Compression with Adaptive Quantization Modules"
+    },
+    {
+      "title": "Uncertainty-guided Continual Learning with Bayesian Neural Networks"
+    },
+    {
+      "title": "Pruning vs Quantization: Which is Better?"
+    },
+    {
+      "title": "Vector Quantization Prompting for Continual Learning"
+    },
+    {
+      "title": "SparCL: Sparse Continual Learning on the Edge"
+    },
+    {
+      "title": "Kanerva++: Extending the Kanerva Machine With Differentiable, Locally Block Allocated Latent Memory"
+    },
+    {
+      "title": "Model-Based Episodic Memory Induces Dynamic Hybrid Controls"
+    },
+    {
+      "title": "Meta-Learning Deep Energy-Based Memory Models"
+    },
+    {
+      "title": "Online Learned Continual Compression with Adaptive Quantization Modules"
+    },
+    {
+      "title": "Remember the Past: Distilling Datasets into Addressable Memories for Neural Networks"
+    }
   ]
 }
