@@ -1,0 +1,13 @@
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/main.py", line 170, in <module>
+    main()
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/main.py", line 166, in main
+    run_experiment_1()
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/main.py", line 70, in run_experiment_1
+    _verify_environment()  # <-- moved inside, executed only when experiment runs
+    ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/main.py", line 46, in _verify_environment
+    raise RuntimeError(
+RuntimeError: [CONSISTENCY-CHECK] Environment variable WATERBIRDS_ROOT not set or path does not exist → Waterbirds images (WILDS) root directory.
