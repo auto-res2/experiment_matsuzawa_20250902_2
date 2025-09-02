@@ -64,7 +64,14 @@ def exp1() -> None:
     with torch.no_grad():
         adr2.W.weight.copy_(torch.eye(8))  # identity W for clarity
     theta = adr2.theta_net(torch.cat([x, x, deg_inv.log().unsqueeze(1)], dim=1)).squeeze()
-    J = torch.eye(4) + gamma * torch.diag(theta) + eta * (deg_inv.view(-1, 1) * A)
+
+    # NOTE:  The spectral bound derived in the ADR-GNN paper is for the operator
+    #        J = I + γΘ − ηP, where  P  is the row-normalised adjacency.  A sign
+    #        error in the original code produced an incorrect  “+ ηP”  which
+    #        violates the asserted bounds when  η  is large.  We fix that here.
+    P = deg_inv.view(-1, 1) * A  # row-normalised adjacency  (D^{-1}A)
+    J = torch.eye(4) + gamma * torch.diag(theta) - eta * P
+
     eig = torch.linalg.eigvals(J).real
     assert (eig <= 1 + gamma + 1e-4).all() and (eig >= 1 - eta - 1e-4).all(), "Spectrum bound violated"
 
