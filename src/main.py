@@ -11,8 +11,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
+from scipy import stats
 
-from train import (
+from .train import (
     SEEDS,
     FlashMambaBlock,
     MambaBlock,
@@ -20,8 +21,8 @@ from train import (
     set_seed,
     train_one_epoch,
 )
-from preprocess import build_loader
-from evaluate import (
+from .preprocess import build_loader
+from .evaluate import (
     ci95,
     evaluate,
     memory_benchmark,
@@ -124,7 +125,7 @@ def experiment_2():
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    from train import FlashMambaBlock, MambaBlock  # local import to avoid circular
+    from .train import FlashMambaBlock, MambaBlock  # local import to avoid circular
 
     configs = [
         ("Baseline-TinyPlus-32", 40, 256, MambaBlock),

@@ -86,7 +86,8 @@ def save_bar_plot(data: Dict[str, float], ylabel: str, title: str, fname: str) -
     ax.set_ylabel(ylabel)
     ax.set_title(title)
     plt.tight_layout()
-    plt.legend(keys, frameon=False)
+    # Legend is unnecessary for a single-bar plot and causes warnings when
+    # no labelled artists exist, so we omit it.
     plt.savefig(fname, bbox_inches="tight", format="pdf")
     plt.close()
 
@@ -96,7 +97,7 @@ def save_bar_plot(data: Dict[str, float], ylabel: str, title: str, fname: str) -
 
 def try_init_model(depth: int, dim: int, block_cls, device: str):
     """Attempt to instantiate & benchmark a model.  Returns (fits, peak_ram)."""
-    from train import TinyVisionMamba  # local import to avoid circularity
+    from .train import TinyVisionMamba  # local import to avoid circularity
 
     try:
         model = TinyVisionMamba(block_cls, depth=depth, dim=dim).to(device)
