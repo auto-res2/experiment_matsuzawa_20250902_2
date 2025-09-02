@@ -89,15 +89,22 @@ class BitPackBuffer:
         self.mean_: np.ndarray | None = None
 
         # storage – ring buffer
-        self.codes: List[np.ndarray] = []  # uint8 [rank]
+        self.codes: List[np.ndarray] = []  # variable length (rank or raw)
         self.labels: List[int] = []
         self.checksums: List[int] = []
 
     # ---------------------------- helpers -----------------------------
     def _current_memory(self) -> int:
-        """Return current buffer memory usage (bytes)."""
-        per_sample = self.rank + 2  # codes + checksum
-        return len(self.codes) * per_sample
+        """Return current buffer memory usage (bytes).
+
+        The buffer can store either compressed codes of length `rank` or
+        raw uint8 images of size C×H×W.  We therefore compute the exact
+        memory footprint dynamically instead of using the constant
+        approximation from the original draft implementation.
+        """
+        codes_bytes = sum(code.nbytes for code in self.codes)
+        checksum_bytes = 2 * len(self.codes)  # 2-byte checksum per sample
+        return codes_bytes + checksum_bytes
 
     def _evict_if_needed(self):
         while self._current_memory() > self.mem_budget:
@@ -136,15 +143,18 @@ class BitPackBuffer:
             q = np.clip(((proj - z_min) / scale * 255).round(), 0, 255).astype(np.uint8)
             for i in range(b):
                 checksum = int(q[i].sum() % 65536)
-                self.codes.append(q[i])
+                self.codes.append(q[i])  # length = rank
                 self.labels.append(int(labels[i]))
                 self.checksums.append(checksum)
             self._evict_if_needed()
         else:
-            # Warm-up period: store raw bytes (counts towards memory!)
+            # Warm-up period: keep a few raw *uint8* images.  Storing the
+            # float32 representation (4× larger) would both waste memory
+            # and break the reconstruction code.  We therefore scale to
+            # [0,255] and cast to uint8 before serialisation.
             for i in range(b):
-                raw_bytes = imgs_np[i].tobytes()
-                self.codes.append(np.frombuffer(raw_bytes, dtype=np.uint8))
+                uint8_img = np.clip((imgs_np[i] * 255.0).round(), 0, 255).astype(np.uint8)
+                self.codes.append(uint8_img)  # length = C×H×W
                 self.labels.append(int(labels[i]))
                 self.checksums.append(0)
                 self._evict_if_needed()
@@ -156,17 +166,20 @@ class BitPackBuffer:
         imgs_rec, labs_rec = [], []
         for i in idx:
             code = self.codes[i]
+            # ---------------- compressed sample --------------------
             if code.dtype == np.uint8 and code.size == self.rank:
                 z = code.astype(np.float32) / 255.0  # [0,1]
-                proj = z * 2.0 - 1.0  # naïve un-quantise
+                proj = z * 2.0 - 1.0  # naïve un-quantise (placeholder)
                 x_flat = self._pca.inverse_transform(proj[np.newaxis, :])[0] + self.mean_
                 x_img = np.clip(x_flat, 0, 1).astype(np.float32).reshape(self.img_shape)
                 imgs_rec.append(x_img)
                 labs_rec.append(self.labels[i])
-            else:  # raw sample stored during warm-up
-                raw = code.tobytes()
-                img = np.frombuffer(raw, dtype=np.uint8).reshape(self.img_shape)
-                imgs_rec.append(img.astype(np.float32) / 255.0)
+            # ---------------- raw uint8 sample ---------------------
+            else:
+                # During the PCA warm-up phase we stored the *uint8* image
+                # tensor directly.  No bytes→array conversion required.
+                img_uint8 = code.reshape(self.img_shape)
+                imgs_rec.append(img_uint8.astype(np.float32) / 255.0)
                 labs_rec.append(self.labels[i])
         imgs_t = torch.tensor(np.stack(imgs_rec), dtype=torch.float32)
         labs_t = torch.tensor(labs_rec, dtype=torch.long)
