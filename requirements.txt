@@ -1,9 +1,23 @@
---extra-index-url https://data.pyg.org/whl/torch-2.1.0+cpu
+# -----------------------------------------------------------------------------
+# Python package requirements
+# -----------------------------------------------------------------------------
+# NOTE: We explicitly pin the "+cpu" wheels that are pre-compiled and hosted by
+# the PyG project.  This avoids expensive (and often failing) C/C++ build steps
+# for `torch_scatter`, `torch_sparse`, … during CI.  The extra *find-links* line
+# tells `pip` where to fetch those wheels.
+# -----------------------------------------------------------------------------
+
+# Pre-built CPU wheels matching PyTorch 2.1.0 for CPython 3.11
+-f https://data.pyg.org/whl/torch-2.1.0+cpu.html
 
 # Core deep-learning stack (CPU wheels – work everywhere)
-torch==2.1.0
-torch_geometric==2.5.0
-torch_scatter==2.1.2
+torch==2.1.0+cpu
+# The “+cpu” variant of torch_geometric already pulls in the matching
+# compiled dependencies (pyg_lib, torch_scatter, torch_sparse, …).
+torch_geometric==2.5.0+cpu
+# We still pin torch_scatter explicitly so that dependency resolution is
+# deterministic and **never** triggers a source build.
+torch_scatter==2.1.2+pt21cpu
 
 # Scientific Python stack
 numpy
