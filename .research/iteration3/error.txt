@@ -1,0 +1,62 @@
+Generating train split:   0%|          | 0/4795 [00:00<?, ? examples/s]Generating train split:  46%|████▌     | 2200/4795 [00:00<00:00, 21367.99 examples/s]Generating train split:  96%|█████████▌| 4600/4795 [00:00<00:00, 22036.92 examples/s]Generating train split: 100%|██████████| 4795/4795 [00:00<00:00, 21758.38 examples/s]
+Generating validation split:   0%|          | 0/1199 [00:00<?, ? examples/s]Generating validation split: 100%|██████████| 1199/1199 [00:00<00:00, 21231.74 examples/s]
+Generating test split:   0%|          | 0/5794 [00:00<?, ? examples/s]Generating test split:  41%|████▏     | 2400/5794 [00:00<00:00, 23458.24 examples/s]Generating test split:  88%|████████▊ | 5100/5794 [00:00<00:00, 25051.65 examples/s]Generating test split: 100%|██████████| 5794/5794 [00:00<00:00, 24952.25 examples/s]
+/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/preprocess.py:184: UserWarning: CelebA preparation failed (Failed to retrieve file url:
+
+	Too many users have viewed or downloaded this file recently. Please
+	try accessing the file again later. If the file you are trying to
+	access is particularly large or is shared with many people, it may
+	take up to 24 hours to be able to view or download the file. If you
+	still can't access a file after 24 hours, contact your domain
+	administrator.
+
+You may still be able to access the file from the browser:
+
+	https://drive.google.com/uc?id=0B7EVK8r0v71pZjFTYXZWM3FlRnM
+
+but Gdown can't. Please check connections and permissions.). Falling back to synthetic dataset. Results obtained with the synthetic data are *not* comparable to the real benchmark.
+  warnings.warn(
+  0%|          | 0.00/170M [00:00<?, ?B/s]  0%|          | 65.5k/170M [00:00<06:06, 465kB/s]  0%|          | 229k/170M [00:00<03:14, 874kB/s]   1%|          | 885k/170M [00:00<00:58, 2.88MB/s]  1%|          | 1.93M/170M [00:00<00:30, 5.46MB/s]  4%|▎         | 6.32M/170M [00:00<00:09, 18.0MB/s]  6%|▌         | 9.47M/170M [00:00<00:07, 21.4MB/s]  8%|▊         | 14.0M/170M [00:00<00:05, 28.5MB/s] 11%|█         | 18.5M/170M [00:00<00:04, 33.4MB/s] 13%|█▎        | 22.2M/170M [00:01<00:04, 34.5MB/s] 15%|█▌        | 26.2M/170M [00:01<00:04, 35.6MB/s] 18%|█▊        | 30.7M/170M [00:01<00:03, 37.4MB/s] 21%|██        | 35.0M/170M [00:01<00:03, 38.9MB/s] 23%|██▎       | 39.7M/170M [00:01<00:03, 41.3MB/s] 26%|██▌       | 43.9M/170M [00:01<00:03, 38.8MB/s] 28%|██▊       | 48.1M/170M [00:01<00:03, 39.9MB/s] 31%|███       | 52.2M/170M [00:01<00:03, 39.3MB/s] 33%|███▎      | 56.7M/170M [00:01<00:02, 40.4MB/s] 36%|███▌      | 61.0M/170M [00:01<00:02, 40.9MB/s] 38%|███▊      | 65.1M/170M [00:02<00:02, 40.0MB/s] 41%|████      | 69.4M/170M [00:02<00:02, 40.7MB/s] 43%|████▎     | 73.5M/170M [00:02<00:02, 39.6MB/s] 46%|████▌     | 78.0M/170M [00:02<00:02, 40.2MB/s] 48%|████▊     | 82.2M/170M [00:02<00:02, 40.7MB/s] 51%|█████     | 87.1M/170M [00:02<00:02, 39.7MB/s] 54%|█████▍    | 91.7M/170M [00:02<00:01, 41.5MB/s] 56%|█████▋    | 95.9M/170M [00:02<00:01, 40.8MB/s] 59%|█████▊    | 100M/170M [00:02<00:01, 40.1MB/s]  61%|██████    | 104M/170M [00:03<00:01, 40.5MB/s] 64%|██████▎   | 108M/170M [00:03<00:01, 39.7MB/s] 66%|██████▌   | 113M/170M [00:03<00:01, 40.3MB/s] 69%|██████▊   | 117M/170M [00:03<00:01, 40.8MB/s] 71%|███████   | 121M/170M [00:03<00:01, 40.9MB/s] 73%|███████▎  | 125M/170M [00:03<00:01, 39.9MB/s] 76%|███████▌  | 130M/170M [00:03<00:01, 40.6MB/s] 79%|███████▊  | 134M/170M [00:03<00:00, 41.8MB/s] 81%|████████  | 138M/170M [00:03<00:00, 41.3MB/s] 84%|████████▎ | 142M/170M [00:03<00:00, 40.7MB/s] 86%|████████▌ | 147M/170M [00:04<00:00, 40.1MB/s] 89%|████████▉ | 151M/170M [00:04<00:00, 41.5MB/s] 92%|█████████▏| 156M/170M [00:04<00:00, 41.6MB/s] 94%|█████████▍| 160M/170M [00:04<00:00, 37.4MB/s] 96%|█████████▋| 164M/170M [00:04<00:00, 36.0MB/s]100%|█████████▉| 170M/170M [00:04<00:00, 39.2MB/s]100%|██████████| 170M/170M [00:04<00:00, 36.4MB/s]
+train e0:   0%|          | 0/75 [00:00<?, ?it/s]train e0:   0%|          | 0/75 [00:00<?, ?it/s]
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/main.py", line 163, in <module>
+    main()
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/main.py", line 156, in main
+    experiment1()
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/main.py", line 63, in experiment1
+    trainer.run()
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/train.py", line 234, in run
+    loss_epoch = self.train_one_epoch(epoch)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/train.py", line 206, in train_one_epoch
+    for x, y, _ in tqdm(self.train_loader, desc=f"train e{epoch}"):
+  File "/home/runner/work/_tool/Python/3.11.13/x64/lib/python3.11/site-packages/tqdm/std.py", line 1181, in __iter__
+    for obj in iterable:
+  File "/home/runner/work/_tool/Python/3.11.13/x64/lib/python3.11/site-packages/torch/utils/data/dataloader.py", line 734, in __next__
+    data = self._next_data()
+           ^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/_tool/Python/3.11.13/x64/lib/python3.11/site-packages/torch/utils/data/dataloader.py", line 1516, in _next_data
+    return self._process_data(data, worker_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/_tool/Python/3.11.13/x64/lib/python3.11/site-packages/torch/utils/data/dataloader.py", line 1551, in _process_data
+    data.reraise()
+  File "/home/runner/work/_tool/Python/3.11.13/x64/lib/python3.11/site-packages/torch/_utils.py", line 769, in reraise
+    raise exception
+KeyError: Caught KeyError in DataLoader worker process 0.
+Original Traceback (most recent call last):
+  File "/home/runner/work/_tool/Python/3.11.13/x64/lib/python3.11/site-packages/torch/utils/data/_utils/worker.py", line 349, in _worker_loop
+    data = fetcher.fetch(index)  # type: ignore[possibly-undefined]
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/_tool/Python/3.11.13/x64/lib/python3.11/site-packages/torch/utils/data/_utils/fetch.py", line 52, in fetch
+    data = [self.dataset[idx] for idx in possibly_batched_index]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/_tool/Python/3.11.13/x64/lib/python3.11/site-packages/torch/utils/data/_utils/fetch.py", line 52, in <listcomp>
+    data = [self.dataset[idx] for idx in possibly_batched_index]
+            ~~~~~~~~~~~~^^^^^
+  File "/home/runner/work/experiment_matsuzawa_20250902_2/experiment_matsuzawa_20250902_2/src/preprocess.py", line 66, in __getitem__
+    y = int(sample["y"])
+            ~~~~~~^^^^^
+KeyError: 'y'
+
