@@ -1,4 +1,3 @@
-```python
 """src/preprocess.py
 Dataset downloading & preprocessing helpers extracted from the monolithic script.
 The CelebA part has been made robust against download-failures that frequently
@@ -256,4 +255,3 @@ def prepare_cifar_spurious() -> Dict[str, Dataset]:
         "validation": make(base_test, idx_val, False),
         "test": make(base_test, idx_test, False),
     }
-```
