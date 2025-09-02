@@ -1,3 +1,4 @@
+```python
 """src/evaluate.py
 ---------------------------------------------------------------------
 Contains experiment definitions, statistical analysis, and plotting
@@ -16,6 +17,7 @@ from typing import List, Dict, Any
 import pandas as pd
 import seaborn as sns
 import matplotlib
+
 matplotlib.use("Agg")  # headless/non-interactive backend
 import matplotlib.pyplot as plt
 import torch
@@ -41,34 +43,57 @@ from .train import (
 #  Helper – robust metric extraction (Avalanche API changed over time)
 # ------------------------------------------------------------------
 
+
 def _find_metric(metrics: Dict[str, Any], name_substr: str) -> float:
     """Return the first metric whose key contains *name_substr* (case-insensitive).
 
-    The Avalanche metric naming scheme changed between versions.  To
-    remain compatible across releases we therefore search for the key
-    at runtime instead of hard-coding the full string.  Preference is
-    given to metrics collected during the *eval* phase when multiple
-    matches exist.
+    Over the last Avalanche releases several metric names changed:
+        • "Accuracy" → "Acc"
+        • "Forgetfulness" → "Forgetting"
+    To remain fully backward-/forward-compatible we therefore try the
+    requested substring verbatim first and – if nothing matches – retry
+    using the most common synonyms.
     """
 
-    # Sort keys to ensure deterministic retrieval order
-    keys = sorted(metrics.keys())
-    preferred, fallback = None, None
-    for k in keys:
-        if name_substr.lower() in k.lower():
-            if "/eval" in k or "eval_phase" in k:
-                preferred = k
-            else:
-                fallback = k if fallback is None else fallback
-    key = preferred or fallback
+    def _search(keys, substr):
+        for k in sorted(keys):  # deterministic
+            if substr.lower() in k.lower():
+                # Prefer evaluation-phase metrics when available
+                if "/eval" in k or "eval_phase" in k:
+                    return k
+        # Fallback: first match irrespective of phase
+        for k in sorted(keys):
+            if substr.lower() in k.lower():
+                return k
+        return None
+
+    key = _search(metrics.keys(), name_substr)
     if key is None:
-        raise KeyError(f"Metric containing '{name_substr}' not found. Available keys: {list(metrics)}")
+        # -------------------- synonym fall-back -------------------
+        synonym_map = {
+            "accuracy": "acc",
+            "acc": "accuracy",
+            "forgetfulness": "forgetting",
+            "forgetting": "forgetfulness",
+        }
+        for word, alt in synonym_map.items():
+            if word in name_substr.lower():
+                alt_substr = name_substr.lower().replace(word, alt)
+                key = _search(metrics.keys(), alt_substr)
+                if key is not None:
+                    break
+    if key is None:
+        raise KeyError(
+            f"Metric containing '{name_substr}' (or common synonyms) not found. "
+            f"Available keys: {list(metrics)}"
+        )
     return float(metrics[key])
 
 
 # ==================================================================
 #  Experiment 1 – Memory × Accuracy trade-off on Split CIFAR-100
 # ==================================================================
+
 
 def run_experiment_1():
     print(
@@ -188,3 +213,4 @@ def run_experiment_1():
     print("\nNumerical results (single seed):")
     print(df.to_string(index=False))
     print("Figures generated:\n  – accuracy_memtradeoff.pdf\n  – forgetting_memtradeoff.pdf")
+```
