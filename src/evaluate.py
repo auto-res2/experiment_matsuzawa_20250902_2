@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+import torch  # Added missing import
 from avalanche.benchmarks.classic import RotatedMNIST
 
 from .preprocess import (
@@ -39,7 +40,7 @@ def run_exp1():
     out.mkdir(exist_ok=True, parents=True)
 
     quick = os.getenv("QUICK", "1") == "1"
-    datasets = [("cifar100", SplitCIFAR100)]  # can be extended with miniImageNet, Tiny-ImageNet
+    datasets = [("cifar100", SplitCIFAR100)]  # extendable
 
     results = []
     for dname, DCls in datasets:
