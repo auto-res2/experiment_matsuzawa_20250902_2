@@ -1,6 +1,11 @@
-torch==2.2.0
+--extra-index-url https://data.pyg.org/whl/torch-2.1.0+cpu
+
+# Core deep-learning stack (CPU wheels – work everywhere)
+torch==2.1.0
 torch_geometric==2.5.0
 torch_scatter==2.1.2
+
+# Scientific Python stack
 numpy
 scipy
 pandas
