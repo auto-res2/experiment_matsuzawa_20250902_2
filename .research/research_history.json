@@ -6,5 +6,82 @@
     "efficient cross-modal retrieval",
     "low-latency contrastive learning",
     "fast image-caption search"
+  ],
+  "research_study_list": [
+    {
+      "title": "Composed Image Retrieval with Text Feedback via Multi-grained Uncertainty Regularization"
+    },
+    {
+      "title": "Multilateral Semantic Relations Modeling for Image Text Retrieval"
+    },
+    {
+      "title": "Image2Sentence based Asymmetrical Zero-shot Composed Image Retrieval"
+    },
+    {
+      "title": "You'll Never Walk Alone: A Sketch and Text Duet for Fine-Grained Image Retrieval"
+    },
+    {
+      "title": "ASIF: Coupled Data Turns Unimodal Models to Multimodal without Training"
+    },
+    {
+      "title": "RetrievalGuard: Provably Robust 1-Nearest Neighbor Image Retrieval"
+    },
+    {
+      "title": "RetrievalGuard: Provably Robust 1-Nearest Neighbor Image Retrieval"
+    },
+    {
+      "title": "Making Retrieval-Augmented Language Models Robust to Irrelevant Context"
+    },
+    {
+      "title": "Robust and Decomposable Average Precision for Image Retrieval"
+    },
+    {
+      "title": "Contextual Similarity Aggregation with Self-attention for Visual Re-ranking"
+    },
+    {
+      "title": "A Differentiable Semantic Metric Approximation in Probabilistic Embedding for Cross-Modal Retrieval"
+    },
+    {
+      "title": "CrossGET: Cross-Guided Ensemble of Tokens for Accelerating Vision-Language Transformers"
+    },
+    {
+      "title": "Improving Cross-Modal Retrieval With Set of Diverse Embeddings"
+    },
+    {
+      "title": "An End-To-End Graph Attention Network Hashing for Cross-Modal Retrieval"
+    },
+    {
+      "title": "Accept the Modality Gap: An Exploration in the Hyperbolic Space"
+    },
+    {
+      "title": "Learning Contrastive Embedding in Low-Dimensional Space"
+    },
+    {
+      "title": "Contrastive UCB: Provably Efficient Contrastive Self-Supervised Learning in Online Reinforcement Learning"
+    },
+    {
+      "title": "Contrastive UCB: Provably Efficient Contrastive Self-Supervised Learning in Online Reinforcement Learning"
+    },
+    {
+      "title": "CLOCS: Contrastive Learning of Cardiac Signals Across Space, Time, and Patients"
+    },
+    {
+      "title": "Understanding Contrastive Representation Learning through Alignment and Uniformity on the Hypersphere"
+    },
+    {
+      "title": "SmallCap: Lightweight Image Captioning Prompted With Retrieval Augmentation"
+    },
+    {
+      "title": "Composing Object Relations and Attributes for Image-Text Matching"
+    },
+    {
+      "title": "Vocabulary-free Image Classification"
+    },
+    {
+      "title": "Learning Transferable Visual Models From Natural Language Supervision"
+    },
+    {
+      "title": "Learning Transferable Visual Models From Natural Language Supervision"
+    }
   ]
 }
