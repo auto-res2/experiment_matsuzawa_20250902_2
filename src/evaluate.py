@@ -18,7 +18,15 @@ __all__ = [
     "save_barplot",
 ]
 
+# ---------------------------------------------------------------------------
+#  RENDERING BACK-END & OUTPUT LOCATION
+# ---------------------------------------------------------------------------
+
 matplotlib.use("Agg")  # ensure head-less back-end
+
+# All figures must live under this directory (created once on import).
+_OUTPUT_DIR = Path(".research/iteration2/images")
+_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ---------------------------------------------------------------------------
 #  CLASSIFICATION EVALUATION
@@ -42,8 +50,14 @@ def evaluate_cls(model: torch.nn.Module, loader) -> float:
 
 
 # ---------------------------------------------------------------------------
-#  PLOTTING HELPERS (unchanged from the original script)
+#  PLOTTING HELPERS
 # ---------------------------------------------------------------------------
+
+def _to_outpath(fname: str | Path) -> Path:
+    """Return the absolute path under the designated output directory."""
+    p = Path(fname)
+    return _OUTPUT_DIR / p.name  # ensure flat namespace inside the folder
+
 
 def save_lineplot(
     x: List,
@@ -51,7 +65,7 @@ def save_lineplot(
     title: str,
     xlabel: str,
     ylabel: str,
-    fname: str,
+    fname: str | Path,
 ):
     sns.set(style="whitegrid")
     plt.figure(figsize=(8, 5))
@@ -65,7 +79,8 @@ def save_lineplot(
     plt.xticks(x)
     plt.legend()
     plt.tight_layout()
-    plt.savefig(fname, bbox_inches="tight")
+    out = _to_outpath(fname)
+    plt.savefig(out, bbox_inches="tight")
     plt.close()
 
 
@@ -74,7 +89,7 @@ def save_barplot(
     values: List[float],
     title: str,
     ylabel: str,
-    fname: str,
+    fname: str | Path,
 ):
     sns.set(style="whitegrid")
     plt.figure(figsize=(6, 4))
@@ -84,5 +99,6 @@ def save_barplot(
     plt.title(title)
     plt.ylabel(ylabel)
     plt.tight_layout()
-    plt.savefig(fname, bbox_inches="tight")
+    out = _to_outpath(fname)
+    plt.savefig(out, bbox_inches="tight")
     plt.close()

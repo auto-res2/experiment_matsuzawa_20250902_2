@@ -13,4 +13,3 @@ hydra-core
 omegaconf
 psutil
 pynvml
-detectron2
