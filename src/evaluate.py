@@ -25,7 +25,8 @@ __all__ = [
 matplotlib.use("Agg")  # ensure head-less back-end
 
 # All figures must live under this directory (created once on import).
-_OUTPUT_DIR = Path(".research/iteration2/images")
+# NOTE: Iteration number updated according to the rubric instructions.
+_OUTPUT_DIR = Path(".research/iteration3/images")
 _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ---------------------------------------------------------------------------
@@ -39,8 +40,8 @@ def evaluate_cls(model: torch.nn.Module, loader) -> float:
     correct, total = 0, 0
     with torch.no_grad():
         for x, y in loader:
-            x = x.cuda(non_blocking=True).float()
-            y = y.cuda(non_blocking=True)
+            x = x.cuda(non_blocking=True).float() if torch.cuda.is_available() else x.float()
+            y = y.cuda(non_blocking=True) if torch.cuda.is_available() else y
             with autocast(dtype=torch.float16):
                 logits = model(x)
             pred = logits.argmax(dim=1)

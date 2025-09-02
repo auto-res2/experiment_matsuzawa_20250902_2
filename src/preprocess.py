@@ -8,7 +8,7 @@ import os
 import random
 import time
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict
 
 import numpy as np
 import torch
@@ -97,7 +97,7 @@ def build_imagenet_loader(
 
         ds = _SynthDataset()
         return DataLoader(
-            ds, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True
+            ds, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=False
         )
 
     # ---------------------------------------------------------------------

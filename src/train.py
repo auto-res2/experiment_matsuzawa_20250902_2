@@ -103,8 +103,8 @@ def train_epoch(
     total_loss, seen = 0.0, 0
 
     for x, y in loader:
-        x = x.cuda(non_blocking=True).float()
-        y = y.cuda(non_blocking=True)
+        x = x.cuda(non_blocking=True).float() if torch.cuda.is_available() else x.float()
+        y = y.cuda(non_blocking=True) if torch.cuda.is_available() else y
 
         optimizer.zero_grad(set_to_none=True)
         with autocast(dtype=torch.float16):
